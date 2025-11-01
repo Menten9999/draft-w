@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<title>管理者画面</title>
+<style>
+	.box{max-width:1000px;margin:24px auto;padding:18px;border:1px solid #eee;border-radius:8px}
+	.row{display:flex;gap:12px;align-items:center;margin-top:12px;flex-wrap:wrap}
+	.card{display:inline-block;padding:12px 16px;background:#17a2b8;color:#fff;border-radius:6px;text-decoration:none;font-weight:600}
+	.card.back{background:#6c757d}
+	.disabled{pointer-events:none;opacity:0.5}
+	.notice{margin-top:12px;color:#d90429;font-weight:600}
+	.section{margin-top:18px;padding-top:12px;border-top:1px dashed #ddd}
+	.team-list, .acquired-list { margin:8px 0; padding-left: 18px; }
+	.lottery-item { border:1px solid #ddd; padding:8px; margin:8px 0; border-radius:6px; }
+	.small { padding:6px 10px; }
+	.reset-button { background-color: #dc3545; margin-left: 15px; color:#fff; border:none; padding:6px 10px; border-radius:4px; }
+	.lottery-button { background-color: #ffc107; color: black; border:none; padding:6px 10px; border-radius:4px; }
+</style>
+</head>
+<body>
+	<main class="box">
+		<h1>管理者画面（ドラフト進行）</h1>
+		<div class="row">
+			<a id="setup-link" class="card" href="../setup/setup.html">セットアップ</a>
+			<a id="home-link" class="card back" href="../home/index.html">ホーム</a>
+		</div>
+
+		<div id="admin-notice" class="notice" style="display:none;"></div>
+
+		<div class="section">
+			<h3>現在選択中の選手（第<span id="round-number">1</span>巡）</h3>
+			<ul id="current-selection-list" class="team-list">読み込み中...</ul>
+		</div>
+
+		<div class="section">
+			<h3>各チーム獲得選手一覧</h3>
+			<ul id="acquired-players-list" class="acquired-list">読み込み中...</ul>
+		</div>
+
+		<div class="section">
+			<h3>進行中のくじ</h3>
+			<div id="lottery-status-container">読み込み中...</div>
+		</div>
+
+		<div class="section">
+			<button id="process-btn" class="small">選択を処理</button>
+			<button id="reset-btn" class="reset-button">ドラフトをリセット</button>
+		</div>
+	</main>
+
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+<script src="../firebase-config.js"></script>
+<script>
+/* c:\Users\Haruto Arai\draft\admin\admin.html
+   ...existing code... */
+(function(){
+	// firebaseConfig の確認
+	if (typeof firebaseConfig === 'undefined') {
+		console.error('firebaseConfig is not defined. Please place draft\\firebase-config.js');
+		const n = document.getElementById('admin-notice');
+		n.textContent = 'エラー: Firebase 設定が読み込まれていません。管理者に確認してください。';
+		n.style.display = 'block';
+		// disable controls
+		document.querySelectorAll('button,a').forEach(el=>el.disabled=true);
+		return;
+	}
+	if (!firebase.apps || !firebase.apps.length) firebase.initializeApp(firebaseConfig);
+	const db = firebase.database();
+
+	// refs
+	const configRef = db.ref('draftConfig');
+	const roundRef = db.ref('round');
+	const currentSelectionsRef = db.ref('currentSelections');
+	const acquiredRef = db.ref('acquiredPlayers');
+	const lotteriesRef = db.ref('lotteries');
+	const selectionConfirmedRef = db.ref('selectionConfirmed');
+	const teamsPassedRef = db.ref('teamsPassed');
+	const teamStatusRef = id => db.ref('teamStatus/' + id);
+	const systemAlertRef = db.ref('systemAlert');
+	const processingRef = db.ref('processing');
+
+	// DOM
+	const roundNumberEl = document.getElementById('round-number');
+	const currentSelectionListEl = document.getElementById('current-selection-list');
+	const acquiredPlayersListEl = document.getElementById('acquired-players-list');
+	const lotteryStatusContainer = document.getElementById('lottery-status-container');
+	const processBtn = document.getElementById('process-btn');
+	const resetBtn = document.getElementById('reset-btn');
+	const adminNoticeEl = document.getElementById('admin-notice');
+
+	// runtime state
+	let teams = [];            // team ids order
+	let teamNames = {};        // id -> display name
+	let waiverOrder = [];      // array of team ids (if provided)
+	let waiverEnabled = false; // draftConfig のフラグを反映
+	let currentSelectionsMap = {}; // latest currentSelections snapshot
+	// 各開票の表示保持時間（ミリ秒）
+	const REVEAL_MS = 30000;
+
+	// load config (teams, candidates, waiverOrder)
+	configRef.on('value', snap => {
+		const cfg = snap.val() || {};
+		teams = Array.isArray(cfg.teams) ? cfg.teams.map(t => t.id) : [];
+		teamNames = {};
+		(cfg.teams || []).forEach((t,i)=> teamNames[t.id] = t.name || `チーム${i+1}`);
+		waiverOrder = Array.isArray(cfg.waiverOrder) ? cfg.waiverOrder.slice() : teams.slice();
+		// ウェイバー方式の有効/無効を反映
+		waiverEnabled = !!cfg.waiverEnabled;
+		renderCurrentSelections(); // refresh display when team list changes
+		renderAcquiredPlayers(); 
+	});
+
+	// round display
+	roundRef.on('value', s => {
+		roundNumberEl.textContent = s.val() || 1;
+	});
+
+	// current selections: update UI + auto-create lotteries for conflicts
+	currentSelectionsRef.on('value', snap => {
+		// 表示のみ行い、自動でくじは作成しない（「選択を処理」ボタンで作成する）
+		currentSelectionsMap = snap.val() || {};
+		renderCurrentSelections();
+	});
+
+	// acquired players UI
+	acquiredRef.on('value', snap => renderAcquiredPlayers(snap.val()));
+
+	// lotteries UI
+	lotteriesRef.on('value', snap => renderLotteryList(snap.val() || {}));
+
+	// render helpers
+	function renderCurrentSelections(){
+		currentSelectionListEl.innerHTML = '';
+		if (!teams.length) { currentSelectionListEl.textContent = 'チームが未設定です'; return; }
+		// compute counts for highlighting conflicts
+		const counts = {};
+		Object.values(currentSelectionsMap).forEach(v => { if (v) counts[v] = (counts[v]||0)+1; });
+		teams.forEach((teamId, i) => {
+			const li = document.createElement('li');
+			const player = currentSelectionsMap[teamId] || '未選択';
+			const name = teamNames[teamId] || `チーム${i+1}`;
+			li.textContent = `${name}: ${player}`;
+			if (player !== '未選択' && counts[player] > 1) {
+				li.style.color = '#d90429';
+				li.title = 'この選手は複数チームが選択しています（くじ対象）';
+			}
+			currentSelectionListEl.appendChild(li);
+		});
+	}
+
+	// acquiredPlayers のネスト（pushキー / 配列 / オブジェクト）を再帰的に走査して文字列を回収
+	function _collectStrings(node, out){
+		if (node == null) return;
+		if (typeof node === 'string') { out.push(node.toString().trim()); return; }
+		if (typeof node === 'number' || typeof node === 'boolean') { out.push(String(node)); return; }
+		if (Array.isArray(node)) { node.forEach(x => _collectStrings(x,out)); return; }
+		if (typeof node === 'object') { Object.values(node).forEach(x => _collectStrings(x,out)); return; }
+	}
+	// 表示用レンダー：チームごとに収集・trim・空除去・一意化して表示
+	function renderAcquiredPlayers(val){
+		if (!acquiredPlayersListEl) return;
+		acquiredPlayersListEl.innerHTML = '';
+		const all = val || {};
+		teams.forEach((teamId, i) => {
+			const name = teamNames[teamId] || `チーム${i+1}`;
+			const collected = [];
+			_collectStrings(all[teamId], collected);
+			const cleaned = collected.map(s => (s||'').toString().trim()).filter(Boolean);
+			const unique = Array.from(new Set(cleaned));
+			const li = document.createElement('li');
+			li.textContent = `${name}: ${ unique.length ? unique.join(', ') : 'なし' }`;
+			acquiredPlayersListEl.appendChild(li);
+		});
+	}
+
+	// acquiredPlayers の変化に対してレンダリング（既存の ref 名に合わせて設定）
+	if (typeof acquiredPlayersRef !== 'undefined') {
+		acquiredPlayersRef.off && acquiredPlayersRef.off('value');
+		acquiredPlayersRef.on('value', snap => {
+			renderAcquiredPlayers(snap.val());
+		});
+	}
+
+	function renderLotteryList(data){
+		lotteryStatusContainer.innerHTML = '';
+		const keys = Object.keys(data || {});
+		if (!keys.length) { lotteryStatusContainer.textContent = '進行中のくじはありません'; return; }
+		keys.forEach(playerKey => {
+			const d = data[playerKey];
+			const player = decodeKey(playerKey);
+			const div = document.createElement('div'); div.className = 'lottery-item';
+			const teamsIn = Object.keys(d.competingTeams || {});
+			const picksCount = Object.keys(d.picks || {}).length;
+			const pTitle = document.createElement('div'); pTitle.innerHTML = `<strong>選手: ${player}</strong>`;
+			const pInfo = document.createElement('div'); pInfo.textContent = `競合: ${teamsIn.map(t=>teamNames[t]||t).join(', ')} ／ 抽選状況: ${picksCount}/${teamsIn.length}`;
+			div.appendChild(pTitle); div.appendChild(pInfo);
+			// reveal button appears when all picks done and not yet revealing
+			if (picksCount === teamsIn.length && !d.isRevealing) {
+				const btn = document.createElement('button');
+				btn.className = 'lottery-button';
+				btn.textContent = `「${player}」の抽選を開票`;
+				btn.onclick = () => revealLotteryResults(playerKey);
+				div.appendChild(btn);
+			}
+			lotteryStatusContainer.appendChild(div);
+		});
+	}
+
+	// encode/decode key for player names to use as Firebase child keys
+	function encodeKey(s){ return encodeURIComponent(s); }
+	function decodeKey(k){ try { return decodeURIComponent(k); } catch(e){ return k; } }
+
+	// processSelections triggered by admin button: assign non-conflicts, leave conflicts to lotteries
+	processBtn.addEventListener('click', async ()=>{
+		try {
+			// 先に選択未完了チェックを行い、途中 return しても processing フラグが残らないようにする
+			const selectionsSnap = await currentSelectionsRef.once('value');
+			const selections = selectionsSnap.val() || {};
+			const confirmedSnap = await selectionConfirmedRef.once('value');
+			const confirmed = confirmedSnap.val() || {};
+			const passedSnap = await teamsPassedRef.once('value');
+			const passed = passedSnap.val() || {};
+			// active teams: not passed and not yet confirmed
+			const activeTeams = teams.filter(t => !(passed && passed[t]) && !(confirmed && confirmed[t]));
+			for (const t of activeTeams) {
+				if (!selections[t]) {
+					return alert('まだ選択を終えていないチームがあります。');
+				}
+			}
+
+			// checks passed -> set processing flag
+			await processingRef.set(true);
+
+			// build map player -> teams
+			const map = {};
+			for (const t of activeTeams) {
+				const p = selections[t];
+				(map[p] || (map[p]=[])).push(t);
+			}
+
+			const nonConflicts = [];
+			const conflicts = {};
+			for (const player in map) {
+				if (map[player].length === 1) nonConflicts.push({ team: map[player][0], player });
+				else conflicts[player] = map[player];
+			}
+
+			// assign non-conflicts
+			for (const item of nonConflicts) {
+				await acquiredRef.child(item.team).push(item.player);
+				await teamStatusRef(item.team).set('交渉権獲得');
+				await selectionConfirmedRef.child(item.team).set(true);
+			}
+
+			// create lotteries for conflicts if not exist
+			for (const player in conflicts) {
+				const pickingTeams = conflicts[player];
+				const key = encodeKey(player);
+				const exist = await lotteriesRef.child(key).once('value');
+				if (exist.exists()) continue;
+				// pickOrder：ウェイバー方式が有効なら最新の draftConfig/waiverOrder を DB から取得して適用する
+				let pickOrder = [];
+				if (waiverEnabled) {
+					try {
+						const waiverSnap = await db.ref('draftConfig/waiverOrder').once('value');
+						const remoteWaiver = waiverSnap.val() || [];
+						if (Array.isArray(remoteWaiver) && remoteWaiver.length) {
+							pickOrder = remoteWaiver.filter(t => pickingTeams.includes(t));
+						}
+					} catch (e) {
+						console.warn('failed to load waiverOrder, falling back to random', e);
+					}
+				}
+				if (!pickOrder || pickOrder.length === 0) {
+					pickOrder = pickingTeams.slice();
+					for (let i = pickOrder.length - 1; i > 0; i--) {
+						const j = Math.floor(Math.random() * (i + 1));
+						[pickOrder[i], pickOrder[j]] = [pickOrder[j], pickOrder[i]];
+					}
+				}
+				const lots = pickingTeams.map((t,i)=>({ id:i, isPicked:false }));
+				await lotteriesRef.child(key).set({
+					competingTeams: pickingTeams.reduce((o,t)=>{ o[t]=true; return o; }, {}),
+					lots,
+					pickOrder,
+					turnIndex: 0,
+					picks: {},
+					isRevealing: false
+				});
+				await systemAlertRef.set(`選手「${player}」で競合が発生しました。抽選を行ってください。`);
+			}
+
+			// clear currentSelections for active teams (they will re-select if lost)
+			for (const t of activeTeams) await currentSelectionsRef.child(t).remove();
+
+			alert('選択処理を行いました。競合があるものは自動でくじが作成されます。');
+		} catch (e) {
+			console.error(e); alert('処理中にエラーが発生しました。コンソールを確認してください。');
+		} finally {
+			// 処理フラグ解除
+			await processingRef.set(false).catch(()=>{});
+			// くじが無ければ次巡へ（存在するくじがある場合はここで進めない）
+			await tryAdvanceRound().catch(()=>{});
+		}
+	});
+
+	// 次巡へ進めるかを判定して進める（くじが残っていないこと、全チームが確定か永久パスしていること）
+	async function tryAdvanceRound(){
+		const lotsSnap = await lotteriesRef.once('value');
+		if (lotsSnap.exists()) {
+			// もし残っているくじが全部「開票済」でかつ開票から REVEAL_MS 経過していれば進める。
+			// そうでなければ進めない（まだ表示中のくじがある）。
+			const now = Date.now();
+			let allRevealedAndExpired = true;
+			lotsSnap.forEach(child => {
+				const v = child.val() || {};
+				if (!v.isRevealing) {
+					allRevealedAndExpired = false;
+					return true; // stop iterating early
+				}
+				if (!v.revealedAt || (now - v.revealedAt) < REVEAL_MS) {
+					allRevealedAndExpired = false;
+					return true;
+				}
+			});
+			if (!allRevealedAndExpired) return;
+			// 全て開票済かつ表示期間が終わっているので、進行を続行（下の判定へ）
+		}
+		const confirmedSnap = await selectionConfirmedRef.once('value');
+		const confirmed = confirmedSnap.val() || {};
+		const passedSnap = await teamsPassedRef.once('value');
+		const passed = passedSnap.val() || {};
+		// 全チームが確定済みか永久パスなら進行
+		const allDone = teams.length > 0 && teams.every(t => (passed && passed[t]) || (confirmed && confirmed[t]));
+		if (!allDone) return;
+		// advance round
+		const curr = (await roundRef.once('value')).val() || 1;
+		await roundRef.set(curr + 1);
+		// 次巡に備えて selectionConfirmed をクリア（チームの確定フラグをリセット）
+		await selectionConfirmedRef.set(null);
+		console.log('Round advanced to', curr + 1);
+	}
+
+	// revealLotteryResults: admin triggers opening/result assign
+	async function revealLotteryResults(playerKey){
+		try {
+			const key = encodeKey(playerKey) === playerKey ? playerKey : encodeKey(decodeKey(playerKey));
+			const snap = await lotteriesRef.child(key).once('value');
+			const data = snap.val();
+			if (!data) return alert('くじデータが取得できません');
+
+			// mark revealing so clients show animation（サーバー時刻で開票タイムスタンプも保存）
+			await lotteriesRef.child(key).child('isRevealing').set(true);
+			await lotteriesRef.child(key).child('revealedAt').set(firebase.database.ServerValue.TIMESTAMP);
+
+			// decide winner: if a winning lot marked exists use it; otherwise random by available picks
+			let winnerTeam = null;
+			// if picks exist (teams submitted picks), determine winner by which team picked winning lot id
+			if (data.picks && Object.keys(data.picks).length) {
+				// if server stored winning flag in lots use it; otherwise use current picks mapping and lots array
+				const winningLot = (data.lots || []).find(l=>l.isWinner) || (data.lots && data.lots[Math.floor(Math.random() * data.lots.length)]);
+				if (winningLot) {
+					for (const teamId in data.picks) {
+						if (data.picks[teamId] === winningLot.id) { winnerTeam = teamId; break; }
+					}
+				}
+			}
+			// fallback: random pick a competing team
+			const teamsIn = Object.keys(data.competingTeams || {});
+			if (!winnerTeam) winnerTeam = teamsIn[Math.floor(Math.random() * teamsIn.length)];
+
+			// assign winner (acquiredPlayers に保存)
+			await acquiredRef.child(winnerTeam).push(decodeKey(key));
+			// ウェイバー順もサーバー側で末尾に移動しておく（クライアントの transaction に依存せず確実に更新）
+			try {
+				await db.ref('draftConfig/waiverOrder').transaction(current => {
+					if (!Array.isArray(current)) return current;
+					const idx = current.indexOf(winnerTeam);
+					if (idx !== -1) {
+						current.splice(idx, 1);
+						current.push(winnerTeam);
+					}
+					return current;
+				});
+			} catch (e) {
+				console.warn('waiverOrder transaction failed', e);
+			}
+
+			for (const t of teamsIn) {
+				if (t === winnerTeam) {
+					await teamStatusRef(t).set('交渉権獲得');
+					await selectionConfirmedRef.child(t).set(true);
+				} else {
+					await teamStatusRef(t).set('落選');
+				}
+			}
+
+			// remove lottery after short delay to let clients animate（各選手ごとに個別タイマー）
+			setTimeout(()=> lotteriesRef.child(key).remove().catch(()=>{}), REVEAL_MS);
+			await systemAlertRef.remove();
+			alert(`${teamNames[winnerTeam]||winnerTeam} を獲得者として確定しました。`);
+		} catch (e) {
+			console.error(e); alert('開票中にエラーが発生しました。');
+		}
+	}
+
+	// reset all (destructive)
+	resetBtn.addEventListener('click', async ()=>{
+		const ok = prompt('警告: 全データを削除します。 delete と入力して実行してください');
+		if (ok !== 'delete') { if (ok !== null) alert('入力が間違っています'); return; }
+		try {
+			await db.ref().set(null);
+			await roundRef.set(1);
+			alert('ドラフトデータを初期化しました。');
+		} catch (e) {
+			console.error(e); alert('リセットに失敗しました。');
+		}
+	});
+})();
+</script>
+</body>
+</html>

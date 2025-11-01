@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<head>
+		<meta charset="UTF-8">
+		<meta name="robots" content="noindex">
+		<link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main class="main">
+        <h1 class="tytle">
+            ログイン画面
+        </h1>
+        <p class="teamname">チーム2</p>
+        <input id="password-input" type="password" placeholder="パスワードを入力">
+        <input type='button' value="送信" onclick="check()">
+    </main>
+    <script>
+    function check(){
+        if(document.getElementById("password-input").value=="arai"){
+            location.href = '../../select/team2/select2.html';
+        } else {
+            alert("パスワードが違います");
+        }
+    }
+    </script>
+</body>

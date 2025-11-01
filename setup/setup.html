@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+	<meta charset="utf-8">
+	<meta name="robots" content="noindex">
+	<link rel="stylesheet" href="style.css">
+	<title>ドラフト初期設定</title>
+	<style>
+		body{font-family: sans-serif; padding: 20px; max-width:800px}
+		label{display:block; margin-top:12px}
+		input[type="text"], textarea{width:100%; box-sizing:border-box; padding:8px}
+		.row{display:flex; gap:8px; align-items:center}
+		button{margin-top:12px; padding:8px 16px}
+		.small{font-size:0.9em;color:#666;margin-top:6px}
+	</style>
+</head>
+<body>
+	<h1>ドラフト初期設定（管理者）</h1>
+	<form id="setup-form">
+		<label>チーム数
+			<input type="number" id="team-count" min="1" max="20" value="4">
+		</label>
+		<label>チーム名（改行で複数行、順番に team1, team2... に割当）
+			<textarea id="team-names" rows="4" placeholder="チームA&#10;チームB&#10;チームC&#10;チームD"></textarea>
+		</label>
+		<label>候補選手（改行で1選手ずつ）
+			<textarea id="candidates" rows="6" placeholder="仙田&#10;新井&#10;上坂"></textarea>
+		</label>
+		<!-- 追加: ウェイバー方式チェック -->
+		<div>
+			<label><input type="checkbox" id="waiver-checkbox"> ウェイバー方式を使用する</label>
+		</div>
+		<div class="row">
+			<button type="button" id="save-btn">保存して初期化</button>
+			<button type="button" id="finish-btn">設定を終了</button> <!-- 追加 -->
+			<button type="button" id="clear-btn">draftConfig を削除</button>
+		</div>
+		<p id="status"></p>
+		<p class="small">注意: firebase-config.js への相対パスは環境に合わせて調整してください。</p>
+	</form>
+
+	<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+	<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+	<script src="../firebase-config.js"></script>
+	<script>
+		// Firebase の設定が読み込まれているか確認して初期化（多重初期化を避ける）
+		if (typeof firebaseConfig === 'undefined') {
+			console.error('firebaseConfig is not defined. Please set draft\\firebase-config.js correctly.');
+			document.getElementById('status').textContent = 'エラー: firebase-config.js が読み込まれていません。管理者に確認してください。';
+			// disable buttons
+			document.getElementById('save-btn').disabled = true;
+			document.getElementById('finish-btn').disabled = true;
+			document.getElementById('clear-btn').disabled = true;
+		} else {
+			if (!firebase.apps || !firebase.apps.length) {
+				firebase.initializeApp(firebaseConfig);
+			}
+		}
+		const db = firebase.database();
+
+		const $count = document.getElementById('team-count');
+		const $names = document.getElementById('team-names');
+		const $cands = document.getElementById('candidates');
+		const $save = document.getElementById('save-btn');
+		const $finish = document.getElementById('finish-btn');
+		const $clear = document.getElementById('clear-btn');
+		const $status = document.getElementById('status');
+
+		// 保存処理を関数化。redirect=true なら保存後に管理画面へ遷移する
+		async function saveConfig(redirect = false) {
+			// disable buttons to prevent double submit
+			$save.disabled = true;
+			$finish.disabled = true;
+			$clear.disabled = true;
+			$status.textContent = '保存中...';
+
+			const count = Math.max(1, Math.min(20, parseInt($count.value || '4', 10)));
+			const nameLines = $names.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+			const candLines = $cands.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+
+			const teams = [];
+			for (let i=0;i<count;i++){
+				const id = 'team' + (i+1);
+				const name = nameLines[i] || `チーム${i+1}`;
+				teams.push({ id, name });
+			}
+
+			const config = {
+				teams,
+				candidates: candLines,
+				waiverEnabled: !!document.getElementById('waiver-checkbox').checked,
+				waiverOrder: teams.map(t => t.id)
+			};
+
+			try {
+				// write config first
+				await db.ref('draftConfig').set(config);
+
+				// confirm write propagated (poll with timeout)
+				const deadline = Date.now() + 5000; // 5s timeout
+				let confirmed = false;
+				while (Date.now() < deadline) {
+					const snap = await db.ref('draftConfig').once('value');
+					const remote = snap.val() || {};
+					if (Array.isArray(remote.teams) && remote.teams.length === config.teams.length) {
+						confirmed = true;
+						break;
+					}
+					await new Promise(r => setTimeout(r, 200));
+				}
+				if (!confirmed) {
+					console.warn('draftConfig write not confirmed within timeout, but continuing.');
+				}
+
+				// then initialize other nodes
+				await db.ref('acquiredPlayers').set(null);
+				await db.ref('lotteries').set(null);
+				const tp = {};
+				const sc = {};
+				teams.forEach(t => { tp[t.id] = false; sc[t.id] = false; });
+				await db.ref('teamsPassed').set(tp);
+				await db.ref('selectionConfirmed').set(sc);
+				// ウェイバーの進行状態をリセットしておく
+				await db.ref('waiverState').set(null);
+
+				$status.textContent = '保存しました。select ページは自動で新設定を反映します。';
+
+				// small delay to let clients react, then redirect if requested
+				if (redirect) {
+					await new Promise(r => setTimeout(r, 300));
+					location.href = '../admin/admin.html';
+				}
+			} catch (e) {
+				console.error('saveConfig error', e);
+				$status.textContent = '保存に失敗しました。コンソールを確認してください。';
+			} finally {
+				// re-enable buttons if still on this page
+				$save.disabled = false;
+				$finish.disabled = false;
+				$clear.disabled = false;
+			}
+		}
+		$save.addEventListener('click', () => saveConfig(false));
+		$finish.addEventListener('click', () => {
+			// 保存して管理画面へ遷移
+			saveConfig(true);
+		});
+		$clear.addEventListener('click', async () => {
+			if (!confirm('draftConfig を削除しますか？関連データも削除されます。')) return;
+			try {
+				await db.ref('draftConfig').remove();
+				await db.ref('acquiredPlayers').remove();
+				await db.ref('lotteries').remove();
+				await db.ref('teamsPassed').remove();
+				await db.ref('selectionConfirmed').remove();
+				$status.textContent = 'draftConfig を削除しました。';
+			} catch (e) {
+				console.error(e);
+				$status.textContent = '削除に失敗しました。';
+			}
+		});
+
+		// ページ読み込み時に既存設定を反映する場合の処理（あれば）：
+		(async () => {
+			const snap = await db.ref('draftConfig').once('value');
+			const cfg = snap.val() || {};
+			if (cfg.waiverEnabled) {
+				const cb = document.getElementById('waiver-checkbox');
+				if (cb) cb.checked = true;
+			}
+		})();
+	</script>
+</body>
+</html>
