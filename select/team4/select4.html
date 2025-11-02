@@ -459,64 +459,75 @@
 		else if (overlay) overlay.style.display = 'none';
 	});
 
-	// 選択確定 / 辞退
+	// 即時獲得トランザクション（acquiredPlayers を更新）
+	async function reservePlayerImmediate(player) {
+		if (!player) return false;
+		const name = player.toString().trim();
+		try {
+			const res = await acquiredPlayersRef.transaction(curr => {
+				curr = curr || {};
+				for (const tid of Object.keys(curr)) {
+					const teamNode = curr[tid];
+					const found = (function scan(node){
+						if (node == null) return false;
+						if (typeof node === 'string') return node.toString().trim() === name;
+						if (Array.isArray(node)) return node.some(scan);
+						if (typeof node === 'object') return Object.values(node).some(scan);
+						return false;
+					})(teamNode);
+					if (found) {
+						if (tid === teamId) return curr;
+						return;
+					}
+				}
+				curr[teamId] = curr[teamId] || {};
+				const key = 's' + Date.now() + Math.floor(Math.random() * 1000);
+				curr[teamId][key] = name;
+				return curr;
+			});
+			return !!(res && res.committed);
+		} catch (e) { console.error('reservePlayerImmediate txn failed', e); return false; }
+	}
+
+	// 選択確定（2巡目以降は即時獲得で確定）
 	async function submitSelection() {
 		const selectedPlayer = (document.jstest && document.jstest.pets) ? document.jstest.pets.value : '';
 		if (!selectedPlayer) { alert('選手を選択してください。'); return; }
 		if (!confirm('「' + selectedPlayer + '」選手でよろしいですか？')) return;
-
-		const round = (document.getElementById('round-title').textContent.match(/第(\d+)巡/) || [])[1] * 1 || 1;
-
-		// 2巡目以降はウェイバー順で自分の番のみ処理
+		const round = (document.getElementById('round-title').textContent.match(/第(\d+)巡/)||[])[1]*1 || 1;
 		if (waiverEnabled && round >= 2) {
 			let state = currentWaiverState;
-			if (!state) {
-				try { const snap = await waiverStateRef.once('value'); state = snap.val(); } catch(e){ console.warn('waiverState read failed', e); }
-			}
-			if (!state || state.currentPicker !== teamId) {
-				alert('現在はあなたの番ではありません。順番が来るまでお待ちください。');
-				return;
-			}
+			if (!state) { try { const s = await waiverStateRef.once('value'); state = s.val(); } catch(e){} }
+			if (!state || state.currentPicker !== teamId) { alert('現在はあなたの番ではありません。順番が来るまでお待ちください。'); return; }
 		}
-
-		const confirmBtn = document.getElementById('confirm-btn');
-		const selectEl = document.getElementById('pet-select');
+		const selectEl = document.getElementById('pet-select'); const confirmBtn = document.getElementById('confirm-btn');
 		try {
-			if (selectEl) selectEl.disabled = true;
-			if (confirmBtn) confirmBtn.disabled = true;
-			await selectionRef.set(selectedPlayer);
+			if (selectEl) selectEl.disabled = true; if (confirmBtn) confirmBtn.disabled = true;
 			if (waiverEnabled && round >= 2) {
+				const ok = await reservePlayerImmediate(selectedPlayer);
+				if (!ok) { alert('その選手は既に他チームに獲得されました。別の選手を選択してください。'); return; }
+				await selectionRef.set(selectedPlayer);
+				await confirmedRef.set(true);
 				await advanceWaiverTurnForRound(round);
+			} else {
+				await selectionRef.set(selectedPlayer);
 			}
-		} catch (e) {
-			console.error('submitSelection error', e);
-			alert('選択の保存に失敗しました。もう一度お試しください。');
-		} finally {
-			if (selectEl) selectEl.disabled = false;
-			if (confirmBtn) confirmBtn.disabled = false;
-		}
+		} catch(e){ console.error(e); alert('保存に失敗しました。'); }
+		finally { if (selectEl) selectEl.disabled=false; if (confirmBtn) confirmBtn.disabled=false; }
 	}
 
-	async function passSelection() {
-		if (!confirm("この巡目以降の選手選択をすべて辞退します。よろしいですか？")) return;
-		const round = (document.getElementById('round-title').textContent.match(/第(\d+)巡/) || [])[1] * 1 || 1;
-		const selectEl = document.getElementById('pet-select');
-		const passBtn = document.querySelector('.pass-button');
+	// 辞退（2巡目以降は番を進める）
+	async function passSelection(){
+		if (!confirm('この巡目以降の選手選択をすべて辞退します。よろしいですか？')) return;
+		const round = (document.getElementById('round-title').textContent.match(/第(\d+)巡/)||[])[1]*1 || 1;
+		const selectEl = document.getElementById('pet-select'); const passBtn = document.querySelector('.pass-button');
 		try {
-			if (selectEl) selectEl.disabled = true;
-			if (passBtn) passBtn.disabled = true;
+			if (selectEl) selectEl.disabled=true; if (passBtn) passBtn.disabled=true;
 			await passedRef.set(true);
 			await selectionRef.remove();
-			if (waiverEnabled && round >= 2) {
-				await advanceWaiverTurnForRound(round);
-			}
-		} catch (e) {
-			console.error('passSelection error', e);
-			alert('辞退処理に失敗しました。再度お試しください。');
-		} finally {
-			if (selectEl) selectEl.disabled = false;
-			if (passBtn) passBtn.disabled = false;
-		}
+			if (waiverEnabled && round >= 2) await advanceWaiverTurnForRound(round);
+		} catch(e){ console.error(e); alert('辞退に失敗しました。'); }
+		finally { if (selectEl) selectEl.disabled=false; if (passBtn) passBtn.disabled=false; }
 	}
 
 	// 初期 UI 更新
