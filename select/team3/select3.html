@@ -1,130 +1,128 @@
 <!DOCTYPE html>
 <head>
-	<meta charset="UTF-8">
-	<meta name="robots" content="noindex">
-	<link rel="stylesheet" href="style.css">
-	<style>
-		#status-message { margin-top: 15px; font-size: 1.1em; font-weight: bold; color: #d90429; height: 25px; }
-		#system-alert-overlay, #waiting-overlay, #lottery-overlay, #result-overlay {
-			position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-			background-color: rgba(0, 0, 0, 0.9); color: white; display: none;
-			justify-content: center; align-items: center; z-index: 1000;
-			text-align: center;
-		}
-		#lottery-overlay, #result-overlay { flex-direction: column; }
-		.pass-button { background-color: #6c757d; margin-left: 10px; float: right; }
-		.pass-button:hover { background-color: #5a6268; }
-		/* ボタン：縦は少し小さく、横は広くして押しやすく */
-		#confirm-btn, .pass-button {
-			padding: 8px 28px;
-			font-size: 1.05rem;
-			min-height: 40px;
-			border-radius: 6px;
-			box-sizing: border-box;
-		}
-		@media (max-width:640px){
-			#confirm-btn, .pass-button { padding: 10px 30px; font-size: 1.08rem; min-height:44px; }
-		}
-		.all-teams-status { margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; }
-		.all-teams-status h3 { margin: 0 0 10px 0; font-size: 1.2em; }
-		.all-teams-status ul { list-style-type: none; padding: 0; text-align: left; }
-		#lottery-box { display: flex; flex-wrap: wrap; gap: 20px; padding: 20px; }
-		.lot-button {
-			width: 150px; height: 100px; font-size: 1.5em; cursor: pointer;
-			border: 2px solid white; background-color: #495057; color: white; border-radius: 10px;
-		}
-		.lot-button:disabled { cursor: not-allowed; background-color: #343a40; opacity: 0.6; }
-		#result-overlay { perspective: 1000px; }
-		.envelope {
-			position: relative; width: 300px; height: 200px;
-			background-color: #f0e68c; border-radius: 5px; cursor: pointer;
-			box-shadow: 0 0 20px rgba(0,0,0,0.5);
-			/* improved 3D handling */
-			transform-style: preserve-3d;
-			overflow: hidden;
-		}
-		.envelope-flap {
-			position: absolute; top: 0; left: 0; width: 100%; height: 50%;
-			background-color: #f0e68c; transform-origin: top center;
-			transition: transform 0.6s cubic-bezier(.2,.8,.2,1);
-			clip-path: polygon(0 0, 100% 0, 50% 100%);
-			backface-visibility: hidden;
-		}
-		.envelope.opened .envelope-flap { transform: rotateX(-180deg); }
-		.result-image-container {
-			position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-			display: flex; justify-content: center; align-items: center;
-			/* ensure children animate in 3D context */
-			transform-style: preserve-3d;
-			pointer-events: none;
-		}
-		#result-image {
-			width: 80%; transform: translateY(120%);
-			transition: transform 0.6s cubic-bezier(.2,.8,.2,1) 0.15s;
-			backface-visibility: hidden;
-			/* 描画パフォーマンス向上のヒント */
-			will-change: transform;
-			transform-style: preserve-3d;
-		}
-		.envelope.opened #result-image { transform: translateY(0); }
-		#lottery-turn-info { font-size: 1.5em; margin-bottom: 20px; }
-	</style>
+    <meta charset="UTF-8">
+    <meta name="robots" content="noindex">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        #status-message { margin-top: 15px; font-size: 1.1em; font-weight: bold; color: #d90429; height: 25px; }
+        #system-alert-overlay, #waiting-overlay, #lottery-overlay, #result-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(0, 0, 0, 0.9); color: white; display: none;
+            justify-content: center; align-items: center; z-index: 1000;
+            text-align: center;
+        }
+        #lottery-overlay, #result-overlay { flex-direction: column; }
+        .pass-button { background-color: #6c757d; margin-left: 10px; float: right; }
+        .pass-button:hover { background-color: #5a6268; }
+        /* ボタン：縦は少し小さく、横は広くして押しやすく */
+        #confirm-btn, .pass-button {
+            padding: 8px 28px; /* 上下 8px / 左右 28px */
+            font-size: 1.05rem;
+            min-height: 40px;
+            border-radius: 6px;
+            box-sizing: border-box;
+        }
+        @media (max-width:640px){
+            #confirm-btn, .pass-button { padding: 10px 30px; font-size: 1.08rem; min-height:44px; }
+        }
+        .all-teams-status { margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; }
+        .all-teams-status h3 { margin: 0 0 10px 0; font-size: 1.2em; }
+        .all-teams-status ul { list-style-type: none; padding: 0; text-align: left; }
+        #lottery-box { display: flex; flex-wrap: wrap; gap: 20px; padding: 20px; }
+        .lot-button {
+            width: 150px; height: 100px; font-size: 1.5em; cursor: pointer;
+            border: 2px solid white; background-color: #495057; color: white; border-radius: 10px;
+        }
+        .lot-button:disabled { cursor: not-allowed; background-color: #343a40; opacity: 0.6; }
+        #result-overlay { perspective: 1000px; }
+        .envelope {
+            position: relative; width: 300px; height: 200px;
+            background-color: #f0e68c; border-radius: 5px; cursor: pointer;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            /* improved 3D handling */
+            transform-style: preserve-3d;
+            overflow: hidden;
+        }
+        .envelope-flap {
+            position: absolute; top: 0; left: 0; width: 100%; height: 50%;
+            background-color: #f0e68c; transform-origin: top center;
+            transition: transform 0.6s cubic-bezier(.2,.8,.2,1);
+            clip-path: polygon(0 0, 100% 0, 50% 100%);
+            backface-visibility: hidden;
+        }
+        .envelope.opened .envelope-flap { transform: rotateX(-180deg); }
+        .result-image-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; justify-content: center; align-items: center;
+            /* ensure children animate in 3D context */
+            transform-style: preserve-3d;
+            pointer-events: none;
+        }
+        #result-image {
+            width: 80%; transform: translateY(120%);
+            transition: transform 0.6s cubic-bezier(.2,.8,.2,1) 0.15s;
+            backface-visibility: hidden;
+            /* 描画パフォーマンス向上のヒント */
+            will-change: transform;
+            transform-style: preserve-3d;
+        }
+        .envelope.opened #result-image { transform: translateY(0); }
+        #lottery-turn-info { font-size: 1.5em; margin-bottom: 20px; }
+    </style>
 </head>
 <body>
 <div id="system-alert-overlay"></div>
 <div id="waiting-overlay"></div>
 <div id="lottery-overlay">
-	<h2 id="lottery-player-name"></h2>
-	<p>他のチームと指名が競合しました。</p>
-	<p id="lottery-turn-info"></p>
-	<div id="lottery-box"></div>
+    <h2 id="lottery-player-name"></h2>
+    <p>他のチームと指名が競合しました。</p>
+    <p id="lottery-turn-info"></p>
+    <div id="lottery-box"></div>
 </div>
 <div id="result-overlay">
-	<h2>結果を開封してください</h2>
-	<div class="envelope" onclick="openEnvelope()">
-		<div class="envelope-flap"></div>
-		<div class="result-image-container">
-			<img id="result-image" src="" alt="抽選結果">
-		</div>
-	</div>
+    <h2>結果を開封してください</h2>
+    <div class="envelope" onclick="openEnvelope()">
+        <div class="envelope-flap"></div>
+        <div class="result-image-container">
+            <img id="result-image" src="" alt="抽選結果">
+        </div>
+    </div>
 </div>
 <main class="main" id="selection-main">
-	<h1 class="tytle" id="round-title">第一巡選択希望選手選択画面</h1>
-	<label for="pet-select">選択希望選手</label>
-	<form name="jstest">
-		<select name="pets" id="pet-select">
-			<option value="">--選手を選択してください--</option>
-		</select>
-	</form>
-	<input id="confirm-btn" type="button" value="確定" onclick="submitSelection()"/>
-	<input type="button" value="選択を辞退" onclick="passSelection()" class="pass-button"/>
-	<div class="selected">選択選手： <span id="BtnTest"></span></div>
-	<div id="status-message"></div>
-	<div class="all-teams-status">
-		<h3>全チームの獲得選手一覧</h3>
-		<ul id="all-selections-list"></ul>
-	</div>
+    <h1 class="tytle" id="round-title">第一巡選択希望選手選択画面</h1>
+    <label for="pet-select">選択希望選手</label>
+    <form name="jstest">
+        <select name="pets" id="pet-select">
+            <option value="">--選手を選択してください--</option>
+        </select>
+    </form>
+    <input id="confirm-btn" type="button" value="確定" onclick="submitSelection()"/>
+    <input type="button" value="選択を辞退" onclick="passSelection()" class="pass-button"/>
+    <div class="selected">選択選手： <span id="BtnTest"></span></div>
+    <div id="status-message"></div>
+    <div class="all-teams-status">
+        <h3>全チームの獲得選手一覧</h3>
+        <ul id="all-selections-list"></ul>
+    </div>
 </main>
-
 <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
 <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
 <script src="../../firebase-config.js"></script>
 <script>
-	// team3 用（バグ修正済みの共通実装）
+	// --- 共通スクリプト（teamId のみファイルごとに変更） ---
 	const teamId = 'team3';
 
-	// Firebase 安全初期化
+	// Firebase 初期化（安全に）
 	if (typeof firebaseConfig === 'undefined') {
-		console.error('firebaseConfig is not defined. Check draft\\firebase-config.js');
-		const status = document.getElementById('status-message');
-		if (status) status.textContent = 'エラー: Firebase 設定がありません。管理者に確認してください。';
+		console.error('firebaseConfig is not defined. Check firebase-config.js');
+		document.getElementById('status-message').textContent = 'エラー: Firebase 設定がありません。管理者に確認してください。';
 		document.querySelectorAll('input, select, button').forEach(el => el.disabled = true);
-		throw new Error('firebaseConfig missing');
+	} else {
+		if (!firebase.apps || !firebase.apps.length) firebase.initializeApp(firebaseConfig);
 	}
-	if (!firebase.apps || !firebase.apps.length) firebase.initializeApp(firebaseConfig);
-	const db = firebase.database();
 
-	// refs
+	const db = firebase.database();
+	// 参照
 	const configRef = db.ref('draftConfig');
 	const roundRef = db.ref('round');
 	const waiverStateRef = db.ref('waiverState');
@@ -137,7 +135,7 @@
 	const processingRef = db.ref('processing');
 	const confirmedRef = db.ref('selectionConfirmed/' + teamId);
 
-	// local state
+	// ローカル状態
 	let teams = ['team1','team2','team3','team4'];
 	let teamNames = {};
 	let allPlayers = [];
@@ -145,10 +143,7 @@
 	let waiverEnabled = false;
 	let currentWaiverState = null;
 
-	// util: safe element getter
-	const $ = id => document.getElementById(id);
-
-	// draftConfig watch
+	// draftConfig 監視（チーム一覧・候補選手・ウェイバー有無）
 	configRef.on('value', snap => {
 		const cfg = snap.val() || {};
 		if (Array.isArray(cfg.teams)) {
@@ -158,80 +153,72 @@
 		}
 		if (Array.isArray(cfg.candidates)) allPlayers = cfg.candidates.slice();
 		waiverEnabled = !!cfg.waiverEnabled;
-		// ensure acquiredPlayersListGlobal exists before update
 		updatePlayerOptions(acquiredPlayersListGlobal);
 	});
 
-	// acquiredPlayers watcher
+	// acquiredPlayers 監視（一覧表示と選択肢更新）
 	acquiredPlayersRef.on('value', snap => {
 		const allAcquired = snap.val() || {};
 		const flat = [];
-		teams.forEach((tid) => {
-			(function collect(node){
+		teams.forEach((tid, idx) => {
+			const collected = [];
+			(function _collect(node){
 				if (node == null) return;
-				if (typeof node === 'string') { flat.push(node.toString().trim()); return; }
-				if (Array.isArray(node)) { node.forEach(collect); return; }
-				if (typeof node === 'object') { Object.values(node).forEach(collect); return; }
+				if (typeof node === 'string') { collected.push(node.toString().trim()); return; }
+				if (Array.isArray(node)) { node.forEach(_collect); return; }
+				if (typeof node === 'object') { Object.values(node).forEach(_collect); return; }
 			})(allAcquired[tid]);
+			const cleaned = collected.map(s=>s||'').filter(Boolean);
+			flat.push(...cleaned);
 		});
-		const unique = Array.from(new Set(flat.filter(Boolean)));
+		const unique = Array.from(new Set(flat));
 		acquiredPlayersListGlobal = unique;
 		updatePlayerOptions(unique);
-		// rebuild display list safely
-		const listEl = $('all-selections-list');
-		if (listEl) {
-			listEl.innerHTML = '';
-			teams.forEach((tid, idx) => {
-				const collected = [];
-				(function collect(node){
-					if (!node) return;
-					if (typeof node === 'string') { collected.push(node.toString().trim()); return; }
-					if (Array.isArray(node)) { node.forEach(collect); return; }
-					if (typeof node === 'object') { Object.values(node).forEach(collect); return; }
-				})(allAcquired[tid]);
-				const cleaned = Array.from(new Set(collected.map(s=>s||'').filter(Boolean)));
-				const li = document.createElement('li');
-				li.textContent = `${teamNames[tid] || `チーム${idx+1}`}: ${cleaned.length ? cleaned.join(', ') : 'なし'}`;
-				listEl.appendChild(li);
-			});
-		}
+
+		// 表示更新
+		const listEl = document.getElementById('all-selections-list');
+		listEl.innerHTML = '';
+		teams.forEach((tid, idx) => {
+			const collected = [];
+			(function _collect(node){
+				if (node == null) return;
+				if (typeof node === 'string') { collected.push(node.toString().trim()); return; }
+				if (Array.isArray(node)) { node.forEach(_collect); return; }
+				if (typeof node === 'object') { Object.values(node).forEach(_collect); return; }
+			})(allAcquired[tid]);
+			const cleaned = collected.map(s=>s||'').filter(Boolean);
+			const li = document.createElement('li');
+			li.textContent = `${teamNames[tid]||`チーム${idx+1}`}: ${cleaned.length ? Array.from(new Set(cleaned)).join(', ') : 'なし'}`;
+			listEl.appendChild(li);
+		});
 	});
 
 	function updatePlayerOptions(acquiredPlayersList){
-		const select = $('pet-select');
+		const select = document.getElementById('pet-select');
 		if (!select) return;
-		const prev = select.value || '';
+		const prev = select.value;
 		select.innerHTML = '<option value="">--選手を選択してください--</option>';
-		const taken = new Set((acquiredPlayersList||[]).map(x=>(x||'').toString().trim()).filter(Boolean));
+		const taken = new Set((acquiredPlayersList||[]).map(x=> (x||'').toString().trim()).filter(Boolean));
 		const available = (allPlayers || []).filter(p => !taken.has((p||'').toString().trim()));
-		available.forEach(p => {
-			const opt = document.createElement('option');
-			opt.value = p;
-			opt.textContent = p;
-			select.appendChild(opt);
-		});
-		// restore previous if still available
+		available.forEach(p => { const opt=document.createElement('option'); opt.value=p; opt.textContent=p; select.appendChild(opt); });
 		select.value = taken.has((prev||'').toString().trim()) ? '' : prev;
 	}
 
-	// waiver order helper
+	// ウェイバー順関係
 	function orderForRound(rnd){
 		if (!waiverEnabled || !Array.isArray(teams)) return teams.slice();
-		if (rnd < 2) return teams.slice();
+		if (rnd < 2) return teams.slice(); // 1巡目は一斉選択
 		return (rnd % 2 === 0) ? teams.slice().reverse() : teams.slice();
 	}
 
-	// monitor waiverState once
 	waiverStateRef.on('value', snap => {
 		currentWaiverState = snap.val();
 		updateWaiverUI();
 	});
 
-	// unified round handler (no duplicates)
 	roundRef.on('value', async snap => {
 		const round = snap.val() || 1;
-		const titleEl = $('round-title');
-		if (titleEl) titleEl.textContent = `第${round}巡選択希望選手選択画面`;
+		document.getElementById('round-title').textContent = `第${round}巡選択希望選手選択画面`;
 		if (waiverEnabled && round >= 2 && Array.isArray(teams) && teams.length) {
 			const order = orderForRound(round);
 			try {
@@ -245,11 +232,11 @@
 	});
 
 	function updateWaiverUI(){
-		const waitingOverlay = $('waiting-overlay');
-		const selectEl = $('pet-select');
-		const confirmBtn = $('confirm-btn');
+		const waitingOverlay = document.getElementById('waiting-overlay');
+		const selectEl = document.getElementById('pet-select');
+		const confirmBtn = document.getElementById('confirm-btn');
 		const passBtn = document.querySelector('.pass-button');
-		const round = ( $('round-title') && $('round-title').textContent.match(/第(\d+)巡/) ) ? (parseInt($('round-title').textContent.match(/第(\d+)巡/)[1],10)) : 1;
+		const round = (document.getElementById('round-title').textContent.match(/第(\d+)巡/)||[])[1]*1 || 1;
 
 		if (!waiverEnabled || round < 2) {
 			if (waitingOverlay && !waitingOverlay.textContent.includes('管理者')) waitingOverlay.style.display = 'none';
@@ -287,7 +274,6 @@
 				if (curr.currentPicker !== teamId) return curr;
 				const nextIndex = (typeof curr.index === 'number') ? curr.index + 1 : 1;
 				if (nextIndex >= order.length) {
-					// mark completed and clear currentPicker
 					return { round: round, index: nextIndex, currentPicker: null, completed: true };
 				}
 				return { round: round, index: nextIndex, currentPicker: order[nextIndex] };
@@ -295,58 +281,53 @@
 		} catch (e) { console.error('advanceWaiverTurnForRound failed', e); }
 	}
 
-	// lotteries (1st round competitions)
+	// lotteries（1巡目の競合くじ）ハンドラ（共通）
 	lotteryRef.on('value', snap => {
 		const lotteries = snap.val() || {};
-		const lotteryOverlay = $('lottery-overlay');
-		const resultOverlay = $('result-overlay');
-		if (!Object.keys(lotteries).length) {
-			if (lotteryOverlay) lotteryOverlay.style.display = 'none';
-			if (resultOverlay) resultOverlay.style.display = 'none';
-			return;
-		}
+		const lotteryOverlay = document.getElementById('lottery-overlay');
+		const resultOverlay = document.getElementById('result-overlay');
+		if (!Object.keys(lotteries).length) { if (lotteryOverlay) lotteryOverlay.style.display='none'; if (resultOverlay) resultOverlay.style.display='none'; return; }
 		let isMyLottery = false;
-		for (const rawKey in lotteries) {
-			const data = lotteries[rawKey];
-			if (data && data.competingTeams && data.competingTeams[teamId]) {
+		for (const key in lotteries) {
+			const data = lotteries[key];
+			if (data.competingTeams && data.competingTeams[teamId]) {
 				isMyLottery = true;
 				const myPick = (data.picks && Object.prototype.hasOwnProperty.call(data.picks, teamId)) ? data.picks[teamId] : undefined;
 				if (data.isRevealing && typeof myPick !== 'undefined') {
-					const resultImage = $('result-image');
-					statusRef.once('value').then(s => {
-						const msg = s.val();
-						if (resultImage) resultImage.src = (msg === '交渉権獲得') ? 'atari.png' : (msg && msg.includes('落選') ? 'hazure.png' : '');
+					const resultImage = document.getElementById('result-image');
+					statusRef.once('value').then(snap => {
+						const msg = snap.val();
+						resultImage.src = (msg === '交渉権獲得') ? 'atari.png' : (msg && msg.includes('落選') ? 'hazure.png' : '');
 						if (resultOverlay) resultOverlay.style.display = 'flex';
 						const env = resultOverlay && resultOverlay.querySelector('.envelope');
 						if (env) { env.classList.remove('opened'); env.style.pointerEvents = ''; }
-						const hint = $('status-message');
+						const hint = document.getElementById('status-message');
 						if (hint) hint.textContent = (msg && msg.includes('落選')) ? '再度選手を選択してください' : '封筒をタップして結果を開封してください。';
 					});
-					if (lotteryOverlay) lotteryOverlay.style.display = 'none';
+					if (lotteryOverlay) lotteryOverlay.style.display='none';
 					return;
 				}
-				let displayKey = rawKey;
-				try { displayKey = decodeURIComponent(rawKey); } catch (e) { /* ignore */ }
-				const nameEl = $('lottery-player-name');
-				if (nameEl) nameEl.textContent = `「${displayKey}」選手の抽選`;
-
+				let displayPlayer = key;
+				try { displayPlayer = decodeURIComponent(key); } catch(e){}
+				const nameEl = document.getElementById('lottery-player-name');
+				if (nameEl) nameEl.textContent = `「${displayPlayer}」選手の抽選`;
 				const turnIndex = data.turnIndex || 0;
-				const turnInfo = $('lottery-turn-info');
+				const turnInfo = document.getElementById('lottery-turn-info');
 				if (turnInfo) {
-					if (turnIndex >= (data.pickOrder || []).length) turnInfo.textContent = '全員の選択が完了しました。開票をお待ちください。';
-					else {
-						const curr = (data.pickOrder || [])[turnIndex];
-						turnInfo.textContent = `次は ${teamNames[curr] || curr} の番です。`;
+					if (turnIndex >= (data.pickOrder||[]).length) {
+						turnInfo.textContent = '全員の選択が完了しました。開票をお待ちください。';
+					} else {
+						const curr = (data.pickOrder||[])[turnIndex];
+						turnInfo.textContent = `次は ${teamNames[curr]||curr} の番です。`;
 					}
 				}
-
-				const myTurn = (data.pickOrder || [])[turnIndex] === teamId;
-				const box = $('lottery-box'); if (box) box.innerHTML = '';
-				(data.lots || []).forEach(lot => {
+				const myTurn = (data.pickOrder||[])[turnIndex] === teamId;
+				const box = document.getElementById('lottery-box'); if (box) box.innerHTML = '';
+				(data.lots||[]).forEach(lot => {
 					const btn = document.createElement('button');
 					btn.className = 'lot-button';
 					btn.textContent = `くじ ${lot.id+1}`;
-					btn.onclick = () => drawLot(rawKey, lot.id);
+					btn.onclick = () => drawLot(key, lot.id);
 					if (!myTurn || lot.isPicked || typeof myPick !== 'undefined') btn.disabled = true;
 					if (box) box.appendChild(btn);
 				});
@@ -354,7 +335,7 @@
 				break;
 			}
 		}
-		if (!isMyLottery && $('lottery-overlay')) $('lottery-overlay').style.display = 'none';
+		if (!isMyLottery && document.getElementById('lottery-overlay')) document.getElementById('lottery-overlay').style.display = 'none';
 	});
 
 	async function drawLot(playerKey, lotId){
@@ -368,23 +349,26 @@
 			const turnIndexSnapshot = await lotteryPlayerRef.child('turnIndex').once('value');
 			const next = (turnIndexSnapshot.val() || 0) + 1;
 			await lotteryPlayerRef.child('turnIndex').set(next);
-		} catch (e) { console.error('drawLot error', e); alert('くじ選択でエラーが発生しました。再度お試しください。'); }
+		} catch (e) { console.error(e); alert('くじ選択でエラーが発生しました。再度お試しください。'); }
 	}
 
-	// status watcher
 	statusRef.on('value', snap => {
 		const msg = snap.val();
-		const hint = $('status-message');
-		const resultImage = $('result-image');
+		const hint = document.getElementById('status-message');
+		const resultImage = document.getElementById('result-image');
 		if (!msg) { if (hint) hint.textContent=''; return; }
-		if (msg === '交渉権獲得') { if (resultImage) resultImage.src = 'atari.png'; if (hint) hint.textContent = ''; }
-		else if (msg.includes('落選')) { if (resultImage) resultImage.src = 'hazure.png'; if (hint) hint.textContent = '再度選手を選択してください'; }
-		else if (hint) hint.textContent = '';
+		if (msg === '交渉権獲得') {
+			if (resultImage) resultImage.src = 'atari.png';
+			if (hint) hint.textContent = '';
+		} else if (msg.includes('落選')) {
+			if (resultImage) resultImage.src = 'hazure.png';
+			if (hint) hint.textContent = '再度選手を選択してください';
+		} else { if (hint) hint.textContent = ''; }
 	});
 
 	function openEnvelope(){
 		const env = document.querySelector('.envelope');
-		const resultImage = $('result-image');
+		const resultImage = document.getElementById('result-image');
 		if (!env || env.classList.contains('opened')) return;
 		env.style.pointerEvents = 'none';
 		statusRef.once('value').then(snap => {
@@ -396,11 +380,11 @@
 			const onEnd = e => {
 				if (e.target && e.target.id === 'result-image') {
 					setTimeout(() => {
-						if ($('result-overlay')) $('result-overlay').style.display='none';
+						document.getElementById('result-overlay').style.display='none';
 						statusRef.remove().catch(()=>{});
 						env.classList.remove('opened');
 						env.style.pointerEvents = '';
-						const h = $('status-message'); if (h) h.textContent = '';
+						const h = document.getElementById('status-message'); if (h) h.textContent = '';
 					}, 30000);
 				}
 			};
@@ -408,35 +392,37 @@
 		});
 	}
 
-	// selection watcher
+	// 選択状態監視
 	selectionRef.on('value', async snap => {
 		const selected = snap.val();
-		const BtnTest = $('BtnTest');
-		if (BtnTest) BtnTest.textContent = selected || '未選択';
-		if (document.jstest && document.jstest.pets) document.jstest.pets.value = selected || '';
-		const sel = $('pet-select');
-		const conf = $('confirm-btn');
-		if (!selected) { if (sel) sel.disabled=false; if (conf) conf.disabled=false; const st=$('status-message'); if (st) st.textContent=''; return; }
+		document.getElementById('BtnTest').textContent = selected || '未選択';
+		document.jstest.pets.value = selected || '';
+		const sel = document.getElementById('pet-select');
+		const conf = document.getElementById('confirm-btn');
+		if (!selected) { if (sel) sel.disabled=false; if (conf) conf.disabled=false; document.getElementById('status-message').textContent=''; return; }
 		try {
-			const statusSnap = await statusRef.once('value');
-			const msg = (statusSnap.val() || '').toString();
+			const [statusSnap, lotterySnap] = await Promise.all([
+				statusRef.once('value'),
+				(async ()=> { const key = encodeURIComponent(selected); const s = await lotteryRef.child(key).once('value'); return s.val(); })()
+			]);
+			const msg = (statusSnap.val()||'').toString();
 			const isLoser = msg && msg.includes('落選');
 			const locked = !isLoser;
 			if (sel) sel.disabled = locked; if (conf) conf.disabled = locked;
-			const st = $('status-message'); if (st) st.textContent = isLoser ? '' : '※ 選択済みのため、この巡では変更できません。';
+			document.getElementById('status-message').textContent = isLoser ? '' : '※ 選択済みのため、この巡では変更できません。';
 		} catch (e) {
 			if (sel) sel.disabled=true; if (conf) conf.disabled=true;
-			const st = $('status-message'); if (st) st.textContent='※ 選択済みのため、この巡では変更できません。';
+			document.getElementById('status-message').textContent='※ 選択済みのため、この巡では変更できません。';
 		}
 	});
 
 	// processing / confirmed / passed / systemAlert
 	processingRef.on('value', snap => {
 		const working = !!snap.val();
-		const selectEl = $('pet-select');
-		const confirmBtn = $('confirm-btn');
+		const selectEl = document.getElementById('pet-select');
+		const confirmBtn = document.getElementById('confirm-btn');
 		const passBtn = document.querySelector('.pass-button');
-		const waitingOverlay = $('waiting-overlay');
+		const waitingOverlay = document.getElementById('waiting-overlay');
 		if (working) {
 			if (selectEl) selectEl.disabled = true;
 			if (confirmBtn) confirmBtn.disabled = true;
@@ -446,60 +432,98 @@
 			if (selectEl) selectEl.disabled = false;
 			if (confirmBtn) confirmBtn.disabled = false;
 			if (passBtn) passBtn.disabled = false;
-			if (waitingOverlay && !($('status-message') && $('status-message').textContent.includes('辞退'))) waitingOverlay.style.display = 'none';
+			if (waitingOverlay && !document.getElementById('status-message').textContent.includes('辞退')) waitingOverlay.style.display = 'none';
 		}
 	});
 
 	confirmedRef.on('value', snap => {
 		const isConf = snap.val();
-		const main = $('selection-main');
-		const wait = $('waiting-overlay');
+		const main = document.getElementById('selection-main');
+		const wait = document.getElementById('waiting-overlay');
 		if (isConf) { if (main) main.style.display='none'; if (wait) { wait.textContent='他のチームの選択が完了するまでお待ちください...'; wait.style.display='flex'; } }
 		else if (wait && !wait.textContent.includes('辞退')) { if (main) main.style.display='block'; wait.style.display='none'; }
 	});
 
 	passedRef.on('value', snap => {
 		const isP = snap.val();
-		const main = $('selection-main');
-		const wait = $('waiting-overlay');
+		const main = document.getElementById('selection-main');
+		const wait = document.getElementById('waiting-overlay');
 		if (isP) { if (main) main.style.display='none'; if (wait) { wait.textContent='選択を辞退しました。ドラフト終了までお待ちください。'; wait.style.display='flex'; } }
 		else if (wait && !wait.textContent.includes('他のチーム')) { if (main) main.style.display='block'; wait.style.display='none'; }
 	});
 
 	systemAlertRef.on('value', snap => {
 		const msg = snap.val();
-		const overlay = $('system-alert-overlay');
-		if (overlay) {
-			if (msg) { overlay.textContent = msg; overlay.style.display = 'flex'; }
-			else overlay.style.display = 'none';
-		}
+		const overlay = document.getElementById('system-alert-overlay');
+		if (msg) { if (overlay) { overlay.textContent = msg; overlay.style.display = 'flex'; } }
+		else if (overlay) overlay.style.display = 'none';
 	});
 
-	// selection actions
-	function submitSelection(){
-		const selectedPlayer = (document.jstest && document.jstest.pets) ? document.jstest.pets.value : ($('pet-select') ? $('pet-select').value : '');
-		if (!selectedPlayer) { alert('選手を選択してください。'); return; }
-		if (!confirm('「'+selectedPlayer+'」選手でよろしいですか？')) return;
-		const round = ( $('round-title') && $('round-title').textContent.match(/第(\d+)巡/) ) ? parseInt($('round-title').textContent.match(/第(\d+)巡/)[1],10) : 1;
-		selectionRef.set(selectedPlayer).catch(e => console.error('set selection failed', e));
-		if (waiverEnabled && round >= 2) advanceWaiverTurnForRound(round).catch(()=>{});
+	// 選択確定 / 辞退
+	async function submitSelection() {
+	const selectedPlayer = document.jstest.pets.value;
+	if (!selectedPlayer) {
+		alert('選手を選択してください。');
+		return;
+	}
+	if (!confirm('「' + selectedPlayer + '」選手でよろしいですか？')) return;
+
+	const round = (document.getElementById('round-title').textContent.match(/第(\d+)巡/) || [])[1] * 1 || 1;
+
+	// 2巡目以降はウェイバー順で自分の番かどうかチェック
+	if (waiverEnabled && round >= 2) {
+		// use cached state if available, fallback to DB read
+		let state = currentWaiverState;
+		if (!state) {
+			try {
+				const snap = await waiverStateRef.once('value');
+				state = snap.val();
+			} catch (e) { console.warn('waiverState read failed', e); }
+		}
+		if (!state || state.currentPicker !== teamId) {
+			alert('現在はあなたの番ではありません。順番が来るまでお待ちください。');
+			return;
+		}
 	}
 
-	function passSelection(){
-		if (!confirm('この巡目以降の選手選択をすべて辞退します。よろしいですか？')) return;
-		const round = ( $('round-title') && $('round-title').textContent.match(/第(\d+)巡/) ) ? parseInt($('round-title').textContent.match(/第(\d+)巡/)[1],10) : 1;
-		passedRef.set(true).catch(()=>{});
-		selectionRef.remove().catch(()=>{});
-		if (waiverEnabled && round >= 2) advanceWaiverTurnForRound(round).catch(()=>{});
+	try {
+		await selectionRef.set(selectedPlayer);
+		// 保存成功後に番を進める（ウェイバー時）
+		if (waiverEnabled && round >= 2) {
+			await advanceWaiverTurnForRound(round);
+		}
+	} catch (e) {
+		console.error('submitSelection error', e);
+		alert('選択の保存に失敗しました。もう一度お試しください。');
 	}
+}
 
-	// init
+	async function passSelection() {
+	if (!confirm("この巡目以降の選手選択をすべて辞退します。よろしいですか？")) return;
+
+	const round = (document.getElementById('round-title').textContent.match(/第(\d+)巡/) || [])[1] * 1 || 1;
+
+	try {
+		await passedRef.set(true);
+		await selectionRef.remove();
+		// ウェイバー順でも、パスが成功したら番を進める
+		if (waiverEnabled && round >= 2) {
+			await advanceWaiverTurnForRound(round);
+		}
+	} catch (e) {
+		console.error('passSelection error', e);
+		alert('辞退処理に失敗しました。再度お試しください。');
+	}
+}
+
+	// 初期 UI 更新
 	(function init(){ setTimeout(updateWaiverUI, 200); })();
 
-	// prevent back
+	// 履歴戻る禁止
 	history.pushState(null, null, location.href);
 	window.addEventListener('popstate', function(){ history.go(1); });
 
+	// --- 共通スクリプト ここまで ---
 </script>
 </body>
 </html>
