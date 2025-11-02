@@ -1,0 +1,3 @@
+# Ignore firebase config (local, contains secrets)
+firebase-config.js
+**/firebase-config.js

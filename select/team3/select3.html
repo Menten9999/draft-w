@@ -110,417 +110,396 @@
 <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
 <script src="../../firebase-config.js"></script>
 <script>
-    /* 共通スクリプト（teamId のみ変更） */
-    const teamId = 'team3';
-    if (typeof firebaseConfig === 'undefined') {
-        console.error('firebaseConfig is not defined. Check draft\\firebase-config.js');
-        document.getElementById('status-message').textContent = 'エラー: Firebase 設定がありません。管理者に確認してください。';
-        document.querySelectorAll('input, select, button').forEach(el => el.disabled = true);
-    } else {
-        if (!firebase.apps || !firebase.apps.length) firebase.initializeApp(firebaseConfig);
-    }
-    const db = firebase.database();
-    const configRef = db.ref('draftConfig');
-    const roundRef = db.ref('round');
-    const waiverStateRef = db.ref('waiverState');
-    const selectionRef = db.ref('currentSelections/' + teamId);
-    const statusRef = db.ref('teamStatus/' + teamId);
-    const acquiredPlayersRef = db.ref('acquiredPlayers');
-    const passedRef = db.ref('teamsPassed/' + teamId);
-    const lotteryRef = db.ref('lotteries');
-    const systemAlertRef = db.ref('systemAlert');
-    const processingRef = db.ref('processing');
-    const confirmedRef = db.ref('selectionConfirmed/' + teamId);
+	// team3 用（バグ修正済みの共通実装）
+	const teamId = 'team3';
 
-    let teams = ['team1','team2','team3','team4'];
-    let teamNames = {};
-    let allPlayers = [];
-    let acquiredPlayersListGlobal = [];
-    let waiverEnabled = false;
-    let currentWaiverState = null;
+	// Firebase 安全初期化
+	if (typeof firebaseConfig === 'undefined') {
+		console.error('firebaseConfig is not defined. Check draft\\firebase-config.js');
+		const status = document.getElementById('status-message');
+		if (status) status.textContent = 'エラー: Firebase 設定がありません。管理者に確認してください。';
+		document.querySelectorAll('input, select, button').forEach(el => el.disabled = true);
+		throw new Error('firebaseConfig missing');
+	}
+	if (!firebase.apps || !firebase.apps.length) firebase.initializeApp(firebaseConfig);
+	const db = firebase.database();
 
-    configRef.on('value', (snap) => {
-        const cfg = snap.val() || {};
-        console.log('draftConfig for team3:', cfg);
-        if (Array.isArray(cfg.teams)) {
-            teams = cfg.teams.map(t => t.id);
-            teamNames = {};
-            cfg.teams.forEach((t, i) => { teamNames[t.id] = t.name || `チーム${i+1}`; });
-        }
-        if (Array.isArray(cfg.candidates)) {
-            allPlayers = cfg.candidates.slice();
-        }
-        updatePlayerOptions(acquiredPlayersListGlobal || []);
-        waiverEnabled = !!cfg.waiverEnabled;
-        const waiverEl = document.getElementById('waiver-order');
-        if (waiverEl) {
-            waiverEl.innerHTML = '';
-            (cfg.waiverOrder || []).forEach(id => {
-                const li = document.createElement('li');
-                li.textContent = teamNames[id] || id;
-                waiverEl.appendChild(li);
-            });
-        }
-    });
-    // acquiredPlayers の受信ログ（宣言後に配置）
-    const acquiredPlayersRef = database.ref('acquiredPlayers');
-    acquiredPlayersRef.on('value', (snapshot) => {
-        console.log('acquiredPlayers for team3 updated:', snapshot.val());
-    });
+	// refs
+	const configRef = db.ref('draftConfig');
+	const roundRef = db.ref('round');
+	const waiverStateRef = db.ref('waiverState');
+	const selectionRef = db.ref('currentSelections/' + teamId);
+	const statusRef = db.ref('teamStatus/' + teamId);
+	const acquiredPlayersRef = db.ref('acquiredPlayers');
+	const passedRef = db.ref('teamsPassed/' + teamId);
+	const lotteryRef = db.ref('lotteries');
+	const systemAlertRef = db.ref('systemAlert');
+	const processingRef = db.ref('processing');
+	const confirmedRef = db.ref('selectionConfirmed/' + teamId);
 
-    const roundRef = database.ref('round');
-    const selectionRef = database.ref('currentSelections/' + teamId);
-    const statusRef = database.ref('teamStatus/' + teamId);
-    const systemAlertRef = database.ref('systemAlert');
-    const processingRef = database.ref('processing');
-    const confirmedRef = database.ref('selectionConfirmed/' + teamId);
-    const passedRef = database.ref('teamsPassed/' + teamId);
-    const lotteryRef = database.ref('lotteries');
+	// local state
+	let teams = ['team1','team2','team3','team4'];
+	let teamNames = {};
+	let allPlayers = [];
+	let acquiredPlayersListGlobal = [];
+	let waiverEnabled = false;
+	let currentWaiverState = null;
 
-    lotteryRef.on('value', (snapshot) => {
-        const lotteries = snapshot.val() || {};
-        const lotteryOverlay = document.getElementById('lottery-overlay');
-        const resultOverlay = document.getElementById('result-overlay');
-        let isMyLottery = false;
+	// util: safe element getter
+	const $ = id => document.getElementById(id);
 
-        if (Object.keys(lotteries).length === 0) {
-            lotteryOverlay.style.display = 'none';
-            resultOverlay.style.display = 'none';
-            return;
-        }
+	// draftConfig watch
+	configRef.on('value', snap => {
+		const cfg = snap.val() || {};
+		if (Array.isArray(cfg.teams)) {
+			teams = cfg.teams.map(t => t.id);
+			teamNames = {};
+			cfg.teams.forEach((t,i) => teamNames[t.id] = t.name || `チーム${i+1}`);
+		}
+		if (Array.isArray(cfg.candidates)) allPlayers = cfg.candidates.slice();
+		waiverEnabled = !!cfg.waiverEnabled;
+		// ensure acquiredPlayersListGlobal exists before update
+		updatePlayerOptions(acquiredPlayersListGlobal);
+	});
 
-        for (const player in lotteries) {
-            const lotteryData = lotteries[player];
-            if (lotteryData.competingTeams && lotteryData.competingTeams[teamId]) {
-                const myPick = (lotteryData.picks && Object.prototype.hasOwnProperty.call(lotteryData.picks, teamId))
-                    ? lotteryData.picks[teamId] : undefined;
-                isMyLottery = true;
-                // 開票アニメーションは自チームがそのくじを選択している場合のみ行う
-                if (lotteryData.isRevealing && typeof myPick !== "undefined") {
-                    const resultImage = document.getElementById('result-image');
-                    statusRef.once('value').then(snap => {
-                        const message = snap.val();
-                        if (message === "交渉権獲得") {
-                            resultImage.src = 'atari.png';
-                        } else if (message && message.includes("落選")) {
-                            resultImage.src = 'hazure.png';
-                        } else {
-                            resultImage.src = '';
-                        }
-                        resultOverlay.style.display = 'flex';
-                        const envelope = resultOverlay.querySelector('.envelope');
-                        envelope.classList.remove('opened');
-                        envelope.style.pointerEvents = '';
-                        const hint = document.getElementById('status-message');
-                        const hintText = (message && message.includes('落選')) ? '再度選手を選択してください' : '封筒をタップして結果を開封してください。';
-                        if (hint) hint.textContent = hintText;
-                    });
-                    lotteryOverlay.style.display = 'none';
-                    return;
-                }
-                
-                document.getElementById('lottery-player-name').textContent = `「${player}」選手の抽選`;
-                let displayPlayer = player;
-                try { displayPlayer = decodeURIComponent(player); } catch (e) { }
-                document.getElementById('lottery-player-name').textContent = `「${displayPlayer}」選手の抽選`;
-                
-                const turnIndex = lotteryData.turnIndex || 0;
-                const turnInfo = document.getElementById('lottery-turn-info');
-                
-                // pickOrder が未定義の場合に備えてガードを入れる
-                const pickOrder = lotteryData.pickOrder || [];
-                if (turnIndex >= pickOrder.length) {
-                    turnInfo.textContent = '全員の選択が完了しました。開票をお待ちください。';
-                } else {
-                    const currentTurnTeamId = pickOrder[turnIndex];
-                    const currentTurnTeamName = teamNames[currentTurnTeamId] || `チーム${teams.indexOf(currentTurnTeamId) + 1}`;
-                    turnInfo.textContent = `次は ${currentTurnTeamName} の番です。`;
-                }
- 
-                const myTurn = (lotteryData.pickOrder || [])[turnIndex] === teamId;
-                const lotteryBox = document.getElementById('lottery-box');
-                lotteryBox.innerHTML = '';
-                // myPick は上で定義済みを利用
-                // lots が未定義の場合に備えてガードを入れる
-                (lotteryData.lots || []).forEach(lot => {
-                     const button = document.createElement('button');
-                     button.className = 'lot-button';
-                     button.textContent = `くじ ${lot.id + 1}`;
-                     button.onclick = () => drawLot(player, lot.id);
-                     if (!myTurn || lot.isPicked || typeof myPick !== "undefined") {
-                         button.disabled = true;
-                     }
-                     lotteryBox.appendChild(button);
-                 });
-                 lotteryOverlay.style.display = 'flex';
-                 break;
-             }
-         }
-        if (!isMyLottery) {
-            lotteryOverlay.style.display = 'none';
-        }
-    });
-    
-    statusRef.on('value', (snapshot) => {
-        const message = snapshot.val();
-        const hintEl = document.getElementById('status-message');
-        const resultImage = document.getElementById('result-image');
-        if (!message) { if (hintEl) hintEl.textContent = ''; return; }
-        if (message === "交渉権獲得") {
-            resultImage.src = 'atari.png';
-            if (waiverEnabled) {
-                waiverRef.transaction(current => {
-                    if (!Array.isArray(current)) return current;
-                    const idx = current.indexOf(teamId);
-                    if (idx !== -1) {
-                        current.splice(idx, 1);
-                        current.push(teamId);
-                    }
-                    return current;
-                }).catch(()=>{});
-            }
-            if (hintEl) hintEl.textContent = '';
-        } else if (message.includes("落選")) {
-            resultImage.src = 'hazure.png';
-            if (hintEl) hintEl.textContent = '再度選手を選択してください';
-        } else {
-            if (hintEl) hintEl.textContent = '';
-        }
-    });
+	// acquiredPlayers watcher
+	acquiredPlayersRef.on('value', snap => {
+		const allAcquired = snap.val() || {};
+		const flat = [];
+		teams.forEach((tid) => {
+			(function collect(node){
+				if (node == null) return;
+				if (typeof node === 'string') { flat.push(node.toString().trim()); return; }
+				if (Array.isArray(node)) { node.forEach(collect); return; }
+				if (typeof node === 'object') { Object.values(node).forEach(collect); return; }
+			})(allAcquired[tid]);
+		});
+		const unique = Array.from(new Set(flat.filter(Boolean)));
+		acquiredPlayersListGlobal = unique;
+		updatePlayerOptions(unique);
+		// rebuild display list safely
+		const listEl = $('all-selections-list');
+		if (listEl) {
+			listEl.innerHTML = '';
+			teams.forEach((tid, idx) => {
+				const collected = [];
+				(function collect(node){
+					if (!node) return;
+					if (typeof node === 'string') { collected.push(node.toString().trim()); return; }
+					if (Array.isArray(node)) { node.forEach(collect); return; }
+					if (typeof node === 'object') { Object.values(node).forEach(collect); return; }
+				})(allAcquired[tid]);
+				const cleaned = Array.from(new Set(collected.map(s=>s||'').filter(Boolean)));
+				const li = document.createElement('li');
+				li.textContent = `${teamNames[tid] || `チーム${idx+1}`}: ${cleaned.length ? cleaned.join(', ') : 'なし'}`;
+				listEl.appendChild(li);
+			});
+		}
+	});
 
-    function openEnvelope() {
-        const envelope = document.querySelector('.envelope');
-        const resultImage = document.getElementById('result-image');
-        if (!envelope || envelope.classList.contains('opened')) return;
+	function updatePlayerOptions(acquiredPlayersList){
+		const select = $('pet-select');
+		if (!select) return;
+		const prev = select.value || '';
+		select.innerHTML = '<option value="">--選手を選択してください--</option>';
+		const taken = new Set((acquiredPlayersList||[]).map(x=>(x||'').toString().trim()).filter(Boolean));
+		const available = (allPlayers || []).filter(p => !taken.has((p||'').toString().trim()));
+		available.forEach(p => {
+			const opt = document.createElement('option');
+			opt.value = p;
+			opt.textContent = p;
+			select.appendChild(opt);
+		});
+		// restore previous if still available
+		select.value = taken.has((prev||'').toString().trim()) ? '' : prev;
+	}
 
-        envelope.style.pointerEvents = 'none';
+	// waiver order helper
+	function orderForRound(rnd){
+		if (!waiverEnabled || !Array.isArray(teams)) return teams.slice();
+		if (rnd < 2) return teams.slice();
+		return (rnd % 2 === 0) ? teams.slice().reverse() : teams.slice();
+	}
 
-        statusRef.once('value').then(snapshot => {
-            const message = snapshot.val();
-            if (message === "交渉権獲得") {
-                resultImage.src = 'atari.png';
-            } else if (message && message.includes("落選")) {
-                resultImage.src = 'hazure.png';
-            }
+	// monitor waiverState once
+	waiverStateRef.on('value', snap => {
+		currentWaiverState = snap.val();
+		updateWaiverUI();
+	});
 
-            void envelope.offsetWidth;
-            envelope.classList.add('opened');
+	// unified round handler (no duplicates)
+	roundRef.on('value', async snap => {
+		const round = snap.val() || 1;
+		const titleEl = $('round-title');
+		if (titleEl) titleEl.textContent = `第${round}巡選択希望選手選択画面`;
+		if (waiverEnabled && round >= 2 && Array.isArray(teams) && teams.length) {
+			const order = orderForRound(round);
+			try {
+				await waiverStateRef.transaction(curr => {
+					if (!curr || curr.round !== round) return { round: round, index: 0, currentPicker: order[0] };
+					return curr;
+				});
+			} catch (e) { console.warn('waiverState init failed', e); }
+		}
+		updateWaiverUI();
+	});
 
-            const onEnd = (e) => {
-                if (e.target && e.target.id === 'result-image') {
-                    // 30秒間は結果を表示する
-                    setTimeout(() => {
-                        document.getElementById('result-overlay').style.display = 'none';
-                        statusRef.remove().catch(()=>{});
-                        envelope.classList.remove('opened');
-                        envelope.style.pointerEvents = '';
-                        const hint = document.getElementById('status-message');
-                        if (hint) hint.textContent = '';
-                    }, 30000);
-                }
-            };
-            resultImage.addEventListener('transitionend', onEnd, { once: true });
-        });
-    }
+	function updateWaiverUI(){
+		const waitingOverlay = $('waiting-overlay');
+		const selectEl = $('pet-select');
+		const confirmBtn = $('confirm-btn');
+		const passBtn = document.querySelector('.pass-button');
+		const round = ( $('round-title') && $('round-title').textContent.match(/第(\d+)巡/) ) ? (parseInt($('round-title').textContent.match(/第(\d+)巡/)[1],10)) : 1;
 
-    async function drawLot(player, lotId) {
-        const lotteryPlayerRef = lotteryRef.child(player);
-        const lotPickedRef = lotteryPlayerRef.child('lots').child(lotId).child('isPicked');
-        const pickRef = lotteryPlayerRef.child('picks').child(teamId);
+		if (!waiverEnabled || round < 2) {
+			if (waitingOverlay && !waitingOverlay.textContent.includes('管理者')) waitingOverlay.style.display = 'none';
+			if (selectEl) selectEl.disabled = false;
+			if (confirmBtn) confirmBtn.disabled = false;
+			if (passBtn) passBtn.disabled = false;
+			return;
+		}
 
-        try {
-            const txnResult = await lotPickedRef.transaction(currentValue => {
-                if (currentValue === true) {
-                    return;
-                }
-                return true;
-            });
+		const order = orderForRound(round);
+		const picker = (currentWaiverState && currentWaiverState.currentPicker) || order[0];
+		const pickerName = teamNames[picker] || `チーム${teams.indexOf(picker)+1}`;
 
-            if (!txnResult || !txnResult.committed) {
-                alert("他のチームに先に選択されました。別のくじを選んでください。");
-                return;
-            }
+		if (picker === teamId) {
+			if (selectEl) selectEl.disabled = false;
+			if (confirmBtn) confirmBtn.disabled = false;
+			if (passBtn) passBtn.disabled = false;
+			if (waitingOverlay) waitingOverlay.style.display = 'none';
+		} else {
+			if (selectEl) selectEl.disabled = true;
+			if (confirmBtn) confirmBtn.disabled = true;
+			if (passBtn) passBtn.disabled = true;
+			if (waitingOverlay) {
+				waitingOverlay.textContent = `${pickerName} の番です。選択が完了するまでお待ちください。`;
+				waitingOverlay.style.display = 'flex';
+			}
+		}
+	}
 
-            await pickRef.set(lotId);
-            const turnIndexSnapshot = await lotteryPlayerRef.child('turnIndex').once('value');
-            const nextTurnIndex = (turnIndexSnapshot.val() || 0) + 1;
-            await lotteryPlayerRef.child('turnIndex').set(nextTurnIndex);
-        } catch (err) {
-            console.error('drawLot error', err);
-            alert("くじ選択でエラーが発生しました。再度お試しください。");
-        }
-    }
+	async function advanceWaiverTurnForRound(round){
+		const order = orderForRound(round);
+		try {
+			await waiverStateRef.transaction(curr => {
+				if (!curr || curr.round !== round) return curr;
+				if (curr.currentPicker !== teamId) return curr;
+				const nextIndex = (typeof curr.index === 'number') ? curr.index + 1 : 1;
+				if (nextIndex >= order.length) {
+					// mark completed and clear currentPicker
+					return { round: round, index: nextIndex, currentPicker: null, completed: true };
+				}
+				return { round: round, index: nextIndex, currentPicker: order[nextIndex] };
+			});
+		} catch (e) { console.error('advanceWaiverTurnForRound failed', e); }
+	}
 
-    function _collectAcquiredStrings(node, out) {
-        if (node == null) return;
-        if (typeof node === 'string') { out.push(node.toString().trim()); return; }
-        if (Array.isArray(node)) { node.forEach(x=>_collectAcquiredStrings(x,out)); return; }
-        if (typeof node === 'object') { Object.values(node).forEach(x=>_collectAcquiredStrings(x,out)); return; }
-    }
-    acquiredPlayersRef.on('value', (snapshot) => {
-        const allAcquiredData = snapshot.val() || {};
-        const listElement = document.getElementById('all-selections-list');
-        listElement.innerHTML = '';
-        const flat = [];
-        teams.forEach((team, index) => {
-            const teamName = teamNames[team] || `チーム${index + 1}`;
-            const playersData = allAcquiredData[team];
-            const teamPlayers = [];
-            _collectAcquiredStrings(playersData, teamPlayers);
-            const cleaned = teamPlayers.map(s => (s||'').toString().trim()).filter(Boolean);
-            const playersText = cleaned.length ? Array.from(new Set(cleaned)).join(', ') : 'なし';
-            const li = document.createElement('li');
-            li.textContent = `${teamName}: ${playersText}`;
-            listElement.appendChild(li);
-            flat.push(...cleaned);
-        });
-        const unique = Array.from(new Set(flat));
-        acquiredPlayersListGlobal = unique;
-        updatePlayerOptions(unique);
-    });
-    
-    function updatePlayerOptions(acquiredPlayersList) {
-        const selectElement = document.getElementById('pet-select');
-        const currentSelectedValue = selectElement.value;
-        selectElement.innerHTML = '<option value="">--選手を選択してください--</option>';
-        const taken = new Set((acquiredPlayersList || []).map(p => (p||'').toString().trim()).filter(Boolean));
-        const availablePlayers = allPlayers.filter(player => !taken.has((player||'').toString().trim()));
-        availablePlayers.forEach(player => {
-            const option = document.createElement('option');
-            option.value = player;
-            option.textContent = player;
-            selectElement.appendChild(option);
-        });
-        selectElement.value = taken.has((currentSelectedValue||'').toString().trim()) ? '' : currentSelectedValue;
-    }
+	// lotteries (1st round competitions)
+	lotteryRef.on('value', snap => {
+		const lotteries = snap.val() || {};
+		const lotteryOverlay = $('lottery-overlay');
+		const resultOverlay = $('result-overlay');
+		if (!Object.keys(lotteries).length) {
+			if (lotteryOverlay) lotteryOverlay.style.display = 'none';
+			if (resultOverlay) resultOverlay.style.display = 'none';
+			return;
+		}
+		let isMyLottery = false;
+		for (const rawKey in lotteries) {
+			const data = lotteries[rawKey];
+			if (data && data.competingTeams && data.competingTeams[teamId]) {
+				isMyLottery = true;
+				const myPick = (data.picks && Object.prototype.hasOwnProperty.call(data.picks, teamId)) ? data.picks[teamId] : undefined;
+				if (data.isRevealing && typeof myPick !== 'undefined') {
+					const resultImage = $('result-image');
+					statusRef.once('value').then(s => {
+						const msg = s.val();
+						if (resultImage) resultImage.src = (msg === '交渉権獲得') ? 'atari.png' : (msg && msg.includes('落選') ? 'hazure.png' : '');
+						if (resultOverlay) resultOverlay.style.display = 'flex';
+						const env = resultOverlay && resultOverlay.querySelector('.envelope');
+						if (env) { env.classList.remove('opened'); env.style.pointerEvents = ''; }
+						const hint = $('status-message');
+						if (hint) hint.textContent = (msg && msg.includes('落選')) ? '再度選手を選択してください' : '封筒をタップして結果を開封してください。';
+					});
+					if (lotteryOverlay) lotteryOverlay.style.display = 'none';
+					return;
+				}
+				let displayKey = rawKey;
+				try { displayKey = decodeURIComponent(rawKey); } catch (e) { /* ignore */ }
+				const nameEl = $('lottery-player-name');
+				if (nameEl) nameEl.textContent = `「${displayKey}」選手の抽選`;
 
-    roundRef.on('value', (snapshot) => {
-        const round = snapshot.val() || 1;
-        document.getElementById('round-title').textContent = `第${round}巡選択希望選手選択画面`;
-    });
+				const turnIndex = data.turnIndex || 0;
+				const turnInfo = $('lottery-turn-info');
+				if (turnInfo) {
+					if (turnIndex >= (data.pickOrder || []).length) turnInfo.textContent = '全員の選択が完了しました。開票をお待ちください。';
+					else {
+						const curr = (data.pickOrder || [])[turnIndex];
+						turnInfo.textContent = `次は ${teamNames[curr] || curr} の番です。`;
+					}
+				}
 
-    // 選択が存在する間は同巡内で変更不可（くじで「落選」になった場合のみ再選択を許可）
-    selectionRef.on('value', (snapshot) => {
-        const selectedPlayer = snapshot.val();
-        document.getElementById("BtnTest").textContent = selectedPlayer || "未選択";
-        document.jstest.pets.value = selectedPlayer || "";
+				const myTurn = (data.pickOrder || [])[turnIndex] === teamId;
+				const box = $('lottery-box'); if (box) box.innerHTML = '';
+				(data.lots || []).forEach(lot => {
+					const btn = document.createElement('button');
+					btn.className = 'lot-button';
+					btn.textContent = `くじ ${lot.id+1}`;
+					btn.onclick = () => drawLot(rawKey, lot.id);
+					if (!myTurn || lot.isPicked || typeof myPick !== 'undefined') btn.disabled = true;
+					if (box) box.appendChild(btn);
+				});
+				if (lotteryOverlay) lotteryOverlay.style.display = 'flex';
+				break;
+			}
+		}
+		if (!isMyLottery && $('lottery-overlay')) $('lottery-overlay').style.display = 'none';
+	});
 
-        const selectEl = document.getElementById('pet-select');
-        const confirmBtn = document.getElementById('confirm-btn');
+	async function drawLot(playerKey, lotId){
+		const lotteryPlayerRef = lotteryRef.child(playerKey);
+		const lotPickedRef = lotteryPlayerRef.child('lots').child(lotId).child('isPicked');
+		const pickRef = lotteryPlayerRef.child('picks').child(teamId);
+		try {
+			const txn = await lotPickedRef.transaction(cur => { if (cur === true) return; return true; });
+			if (!txn || !txn.committed) { alert('他のチームに先に選択されました。別のくじを選んでください。'); return; }
+			await pickRef.set(lotId);
+			const turnIndexSnapshot = await lotteryPlayerRef.child('turnIndex').once('value');
+			const next = (turnIndexSnapshot.val() || 0) + 1;
+			await lotteryPlayerRef.child('turnIndex').set(next);
+		} catch (e) { console.error('drawLot error', e); alert('くじ選択でエラーが発生しました。再度お試しください。'); }
+	}
 
-        if (!selectedPlayer) {
-            selectEl.disabled = false;
-            confirmBtn.disabled = false;
-            document.getElementById('status-message').textContent = '';
-            return;
-        }
+	// status watcher
+	statusRef.on('value', snap => {
+		const msg = snap.val();
+		const hint = $('status-message');
+		const resultImage = $('result-image');
+		if (!msg) { if (hint) hint.textContent=''; return; }
+		if (msg === '交渉権獲得') { if (resultImage) resultImage.src = 'atari.png'; if (hint) hint.textContent = ''; }
+		else if (msg.includes('落選')) { if (resultImage) resultImage.src = 'hazure.png'; if (hint) hint.textContent = '再度選手を選択してください'; }
+		else if (hint) hint.textContent = '';
+	});
 
-        Promise.all([
-            statusRef.once('value'),
-            (async () => {
-                try {
-                    const key = encodeURIComponent(selectedPlayer);
-                    const s = await database.ref('lotteries').child(key).once('value');
-                    return s.val();
-                } catch (e) { return null; }
-            })()
-        ]).then(([statusSnap, lotteryData]) => {
-            const msg = (statusSnap.val() || '').toString();
-            const isLoser = msg && msg.includes('落選');
-            const locked = !isLoser;
-            selectEl.disabled = locked;
-            confirmBtn.disabled = locked;
-            document.getElementById('status-message').textContent = isLoser ? '' : '※ 選択済みのため、この巡では変更できません。';
-        }).catch(()=> {
-            selectEl.disabled = true;
-            confirmBtn.disabled = true;
-            document.getElementById('status-message').textContent = '※ 選択済みのため、この巡では変更できません。';
-        });
-    });
-    
-    systemAlertRef.on('value', (snapshot) => {
-        const message = snapshot.val();
-        const overlay = document.getElementById('system-alert-overlay');
-        if (message) {
-            overlay.textContent = message;
-            overlay.style.display = 'flex';
-        } else {
-            overlay.style.display = 'none';
-        }
-    });
+	function openEnvelope(){
+		const env = document.querySelector('.envelope');
+		const resultImage = $('result-image');
+		if (!env || env.classList.contains('opened')) return;
+		env.style.pointerEvents = 'none';
+		statusRef.once('value').then(snap => {
+			const message = snap.val();
+			if (message === '交渉権獲得') resultImage && (resultImage.src='atari.png');
+			else if (message && message.includes('落選')) resultImage && (resultImage.src='hazure.png');
+			void env.offsetWidth;
+			env.classList.add('opened');
+			const onEnd = e => {
+				if (e.target && e.target.id === 'result-image') {
+					setTimeout(() => {
+						if ($('result-overlay')) $('result-overlay').style.display='none';
+						statusRef.remove().catch(()=>{});
+						env.classList.remove('opened');
+						env.style.pointerEvents = '';
+						const h = $('status-message'); if (h) h.textContent = '';
+					}, 30000);
+				}
+			};
+			resultImage && resultImage.addEventListener('transitionend', onEnd, { once:true });
+		});
+	}
 
-    processingRef.on('value', (snap) => {
-        const working = !!snap.val();
-        const selectEl = document.getElementById('pet-select');
-        const confirmBtn = document.getElementById('confirm-btn');
-        const passBtn = document.querySelector('.pass-button');
-        const waitingOverlay = document.getElementById('waiting-overlay');
-        if (working) {
-            if (selectEl) selectEl.disabled = true;
-            if (confirmBtn) confirmBtn.disabled = true;
-            if (passBtn) passBtn.disabled = true;
-            waitingOverlay.textContent = '管理者が選択を処理しています。しばらくお待ちください...';
-            waitingOverlay.style.display = 'flex';
-        } else {
-            if (selectEl) selectEl.disabled = false;
-            if (confirmBtn) confirmBtn.disabled = false;
-            if (passBtn) passBtn.disabled = false;
-            if (!document.getElementById('status-message').textContent.includes('辞退')) {
-                waitingOverlay.style.display = 'none';
-            }
-        }
-    });
+	// selection watcher
+	selectionRef.on('value', async snap => {
+		const selected = snap.val();
+		const BtnTest = $('BtnTest');
+		if (BtnTest) BtnTest.textContent = selected || '未選択';
+		if (document.jstest && document.jstest.pets) document.jstest.pets.value = selected || '';
+		const sel = $('pet-select');
+		const conf = $('confirm-btn');
+		if (!selected) { if (sel) sel.disabled=false; if (conf) conf.disabled=false; const st=$('status-message'); if (st) st.textContent=''; return; }
+		try {
+			const statusSnap = await statusRef.once('value');
+			const msg = (statusSnap.val() || '').toString();
+			const isLoser = msg && msg.includes('落選');
+			const locked = !isLoser;
+			if (sel) sel.disabled = locked; if (conf) conf.disabled = locked;
+			const st = $('status-message'); if (st) st.textContent = isLoser ? '' : '※ 選択済みのため、この巡では変更できません。';
+		} catch (e) {
+			if (sel) sel.disabled=true; if (conf) conf.disabled=true;
+			const st = $('status-message'); if (st) st.textContent='※ 選択済みのため、この巡では変更できません。';
+		}
+	});
 
-    confirmedRef.on('value', (snapshot) => {
-        const isConfirmed = snapshot.val();
-        const mainContent = document.getElementById('selection-main');
-        const waitingOverlay = document.getElementById('waiting-overlay');
-        if (isConfirmed) {
-            mainContent.style.display = 'none';
-            waitingOverlay.textContent = '他のチームの選択が完了するまでお待ちください...';
-            waitingOverlay.style.display = 'flex';
-        } else if (!waitingOverlay.textContent.includes('辞退')) {
-            mainContent.style.display = 'block';
-            waitingOverlay.style.display = 'none';
-        }
-    });
+	// processing / confirmed / passed / systemAlert
+	processingRef.on('value', snap => {
+		const working = !!snap.val();
+		const selectEl = $('pet-select');
+		const confirmBtn = $('confirm-btn');
+		const passBtn = document.querySelector('.pass-button');
+		const waitingOverlay = $('waiting-overlay');
+		if (working) {
+			if (selectEl) selectEl.disabled = true;
+			if (confirmBtn) confirmBtn.disabled = true;
+			if (passBtn) passBtn.disabled = true;
+			if (waitingOverlay) { waitingOverlay.textContent = '管理者が選択を処理しています。しばらくお待ちください...'; waitingOverlay.style.display='flex'; }
+		} else {
+			if (selectEl) selectEl.disabled = false;
+			if (confirmBtn) confirmBtn.disabled = false;
+			if (passBtn) passBtn.disabled = false;
+			if (waitingOverlay && !($('status-message') && $('status-message').textContent.includes('辞退'))) waitingOverlay.style.display = 'none';
+		}
+	});
 
-    passedRef.on('value', (snapshot) => {
-        const isPassed = snapshot.val();
-        const mainContent = document.getElementById('selection-main');
-        const waitingOverlay = document.getElementById('waiting-overlay');
-        if (isPassed) {
-            mainContent.style.display = 'none';
-            waitingOverlay.textContent = '選択を辞退しました。ドラフト終了までお待ちください。';
-            waitingOverlay.style.display = 'flex';
-        } else if (!waitingOverlay.textContent.includes('他のチーム')) {
-            mainContent.style.display = 'block';
-            waitingOverlay.style.display = 'none';
-        }
-    });
+	confirmedRef.on('value', snap => {
+		const isConf = snap.val();
+		const main = $('selection-main');
+		const wait = $('waiting-overlay');
+		if (isConf) { if (main) main.style.display='none'; if (wait) { wait.textContent='他のチームの選択が完了するまでお待ちください...'; wait.style.display='flex'; } }
+		else if (wait && !wait.textContent.includes('辞退')) { if (main) main.style.display='block'; wait.style.display='none'; }
+	});
 
-    function submitSelection() {
-        const selectedPlayer = document.jstest.pets.value;
-        if (selectedPlayer) {
-            if (confirm('「' + selectedPlayer + '」選手でよろしいですか？')) {
-                selectionRef.set(selectedPlayer);
-            }
-        } else {
-            alert('選手を選択してください。');
-        }
-    }
+	passedRef.on('value', snap => {
+		const isP = snap.val();
+		const main = $('selection-main');
+		const wait = $('waiting-overlay');
+		if (isP) { if (main) main.style.display='none'; if (wait) { wait.textContent='選択を辞退しました。ドラフト終了までお待ちください。'; wait.style.display='flex'; } }
+		else if (wait && !wait.textContent.includes('他のチーム')) { if (main) main.style.display='block'; wait.style.display='none'; }
+	});
 
-    function passSelection() {
-        if (confirm("この巡目以降の選手選択をすべて辞退します。よろしいですか？")) {
-            passedRef.set(true);
-            selectionRef.remove();
-        }
-    }
+	systemAlertRef.on('value', snap => {
+		const msg = snap.val();
+		const overlay = $('system-alert-overlay');
+		if (overlay) {
+			if (msg) { overlay.textContent = msg; overlay.style.display = 'flex'; }
+			else overlay.style.display = 'none';
+		}
+	});
 
-    history.pushState(null, null, location.href);
-    window.addEventListener('popstate', function(e) {
-        history.go(1);
-    });
+	// selection actions
+	function submitSelection(){
+		const selectedPlayer = (document.jstest && document.jstest.pets) ? document.jstest.pets.value : ($('pet-select') ? $('pet-select').value : '');
+		if (!selectedPlayer) { alert('選手を選択してください。'); return; }
+		if (!confirm('「'+selectedPlayer+'」選手でよろしいですか？')) return;
+		const round = ( $('round-title') && $('round-title').textContent.match(/第(\d+)巡/) ) ? parseInt($('round-title').textContent.match(/第(\d+)巡/)[1],10) : 1;
+		selectionRef.set(selectedPlayer).catch(e => console.error('set selection failed', e));
+		if (waiverEnabled && round >= 2) advanceWaiverTurnForRound(round).catch(()=>{});
+	}
+
+	function passSelection(){
+		if (!confirm('この巡目以降の選手選択をすべて辞退します。よろしいですか？')) return;
+		const round = ( $('round-title') && $('round-title').textContent.match(/第(\d+)巡/) ) ? parseInt($('round-title').textContent.match(/第(\d+)巡/)[1],10) : 1;
+		passedRef.set(true).catch(()=>{});
+		selectionRef.remove().catch(()=>{});
+		if (waiverEnabled && round >= 2) advanceWaiverTurnForRound(round).catch(()=>{});
+	}
+
+	// init
+	(function init(){ setTimeout(updateWaiverUI, 200); })();
+
+	// prevent back
+	history.pushState(null, null, location.href);
+	window.addEventListener('popstate', function(){ history.go(1); });
+
 </script>
 </body>
 </html>
