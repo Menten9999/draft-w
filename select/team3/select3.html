@@ -460,61 +460,64 @@
 	});
 
 	// 選択確定 / 辞退
-	async function submitSelection() {
-	const selectedPlayer = document.jstest.pets.value;
-	if (!selectedPlayer) {
-		alert('選手を選択してください。');
-		return;
-	}
-	if (!confirm('「' + selectedPlayer + '」選手でよろしいですか？')) return;
+	{
+		async function submitSelection() {
+			const selectedPlayer = (document.jstest && document.jstest.pets) ? document.jstest.pets.value : '';
+			if (!selectedPlayer) { alert('選手を選択してください。'); return; }
+			if (!confirm('「' + selectedPlayer + '」選手でよろしいですか？')) return;
 
-	const round = (document.getElementById('round-title').textContent.match(/第(\d+)巡/) || [])[1] * 1 || 1;
+			const round = (document.getElementById('round-title').textContent.match(/第(\d+)巡/) || [])[1] * 1 || 1;
+			if (waiverEnabled && round >= 2) {
+				let state = currentWaiverState;
+				if (!state) {
+					try { const snap = await waiverStateRef.once('value'); state = snap.val(); } catch(e){ console.warn('waiverState read failed', e); }
+				}
+				if (!state || state.currentPicker !== teamId) {
+					alert('現在はあなたの番ではありません。順番が来るまでお待ちください。');
+					return;
+				}
+			}
 
-	// 2巡目以降はウェイバー順で自分の番かどうかチェック
-	if (waiverEnabled && round >= 2) {
-		// use cached state if available, fallback to DB read
-		let state = currentWaiverState;
-		if (!state) {
+			const selectEl = document.getElementById('pet-select');
+			const confirmBtn = document.getElementById('confirm-btn');
 			try {
-				const snap = await waiverStateRef.once('value');
-				state = snap.val();
-			} catch (e) { console.warn('waiverState read failed', e); }
+				if (selectEl) selectEl.disabled = true;
+				if (confirmBtn) confirmBtn.disabled = true;
+				await selectionRef.set(selectedPlayer);
+				if (waiverEnabled && round >= 2) {
+					await advanceWaiverTurnForRound(round);
+				}
+			} catch (e) {
+				console.error('submitSelection error', e);
+				alert('選択の保存に失敗しました。もう一度お試しください。');
+			} finally {
+				if (selectEl) selectEl.disabled = false;
+				if (confirmBtn) confirmBtn.disabled = false;
+			}
 		}
-		if (!state || state.currentPicker !== teamId) {
-			alert('現在はあなたの番ではありません。順番が来るまでお待ちください。');
-			return;
+
+		async function passSelection() {
+			if (!confirm("この巡目以降の選手選択をすべて辞退します。よろしいですか？")) return;
+			const round = (document.getElementById('round-title').textContent.match(/第(\d+)巡/) || [])[1] * 1 || 1;
+			const selectEl = document.getElementById('pet-select');
+			const passBtn = document.querySelector('.pass-button');
+			try {
+				if (selectEl) selectEl.disabled = true;
+				if (passBtn) passBtn.disabled = true;
+				await passedRef.set(true);
+				await selectionRef.remove();
+				if (waiverEnabled && round >= 2) {
+					await advanceWaiverTurnForRound(round);
+				}
+			} catch (e) {
+				console.error('passSelection error', e);
+				alert('辞退処理に失敗しました。再度お試しください。');
+			} finally {
+				if (selectEl) selectEl.disabled = false;
+				if (passBtn) passBtn.disabled = false;
+			}
 		}
 	}
-
-	try {
-		await selectionRef.set(selectedPlayer);
-		// 保存成功後に番を進める（ウェイバー時）
-		if (waiverEnabled && round >= 2) {
-			await advanceWaiverTurnForRound(round);
-		}
-	} catch (e) {
-		console.error('submitSelection error', e);
-		alert('選択の保存に失敗しました。もう一度お試しください。');
-	}
-}
-
-	async function passSelection() {
-	if (!confirm("この巡目以降の選手選択をすべて辞退します。よろしいですか？")) return;
-
-	const round = (document.getElementById('round-title').textContent.match(/第(\d+)巡/) || [])[1] * 1 || 1;
-
-	try {
-		await passedRef.set(true);
-		await selectionRef.remove();
-		// ウェイバー順でも、パスが成功したら番を進める
-		if (waiverEnabled && round >= 2) {
-			await advanceWaiverTurnForRound(round);
-		}
-	} catch (e) {
-		console.error('passSelection error', e);
-		alert('辞退処理に失敗しました。再度お試しください。');
-	}
-}
 
 	// 初期 UI 更新
 	(function init(){ setTimeout(updateWaiverUI, 200); })();
