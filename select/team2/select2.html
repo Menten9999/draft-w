@@ -477,9 +477,10 @@
 					})(teamNode);
 					if (found) {
 						if (tid === teamId) return curr; // 冪等
-						return; // 他チーム取得済 => abort
+						return; // 他チームが既に取得 -> abort
 					}
 				}
+				// 未取得なら自チームノードに追加
 				curr[teamId] = curr[teamId] || {};
 				const key = 's' + Date.now() + Math.floor(Math.random() * 1000);
 				curr[teamId][key] = name;
@@ -499,10 +500,17 @@
 		if (!confirm('「' + selectedPlayer + '」選手でよろしいですか？')) return;
 
 		const round = (document.getElementById('round-title').textContent.match(/第(\d+)巡/) || [])[1] * 1 || 1;
+
+		// 2巡目以降は UI で自分の番か確認（排他は txn で担保）
 		if (waiverEnabled && round >= 2) {
 			let state = currentWaiverState;
-			if (!state) { try { const s = await waiverStateRef.once('value'); state = s.val(); } catch(e){} }
-			if (!state || state.currentPicker !== teamId) { alert('現在はあなたの番ではありません。順番が来るまでお待ちください。'); return; }
+			if (!state) {
+				try { const s = await waiverStateRef.once('value'); state = s.val(); } catch (e) { console.warn(e); }
+			}
+			if (!state || state.currentPicker !== teamId) {
+				alert('現在はあなたの番ではありません。順番が来るまでお待ちください。');
+				return;
+			}
 		}
 
 		const selectEl = document.getElementById('pet-select');
@@ -510,18 +518,24 @@
 		try {
 			if (selectEl) selectEl.disabled = true;
 			if (confirmBtn) confirmBtn.disabled = true;
+
 			if (waiverEnabled && round >= 2) {
 				const ok = await reservePlayerImmediate(selectedPlayer);
-				if (!ok) { alert('その選手は既に他チームに獲得されました。別の選手を選択してください。'); return; }
+				if (!ok) {
+					alert('その選手は既に他チームに獲得されました。別の選手を選択してください。');
+					return;
+				}
+				// トランザクション成功：確定を記録して次へ
 				await selectionRef.set(selectedPlayer);
 				await confirmedRef.set(true);
 				await advanceWaiverTurnForRound(round);
 			} else {
+				// 1巡目（またはウェイバー無効）は従来フロー
 				await selectionRef.set(selectedPlayer);
 			}
 		} catch (e) {
 			console.error('submitSelection error', e);
-			alert('選択の保存に失敗しました。');
+			alert('選択の保存に失敗しました。再度お試しください。');
 		} finally {
 			if (selectEl) selectEl.disabled = false;
 			if (confirmBtn) confirmBtn.disabled = false;
@@ -539,10 +553,12 @@
 			if (passBtn) passBtn.disabled = true;
 			await passedRef.set(true);
 			await selectionRef.remove();
-			if (waiverEnabled && round >= 2) await advanceWaiverTurnForRound(round);
+			if (waiverEnabled && round >= 2) {
+				await advanceWaiverTurnForRound(round);
+			}
 		} catch (e) {
 			console.error('passSelection error', e);
-			alert('辞退処理に失敗しました。');
+			alert('辞退処理に失敗しました。再度お試しください。');
 		} finally {
 			if (selectEl) selectEl.disabled = false;
 			if (passBtn) passBtn.disabled = false;
